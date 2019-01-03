@@ -1,0 +1,9 @@
+[package]
+name = "rustyknife"
+version = "0.1.0"
+authors = ["Thomas ten Cate <ttencate@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+quick-error = "1.2.2"
+structopt = "0.2.14"
