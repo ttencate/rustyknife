@@ -1,5 +1,7 @@
 use quick_error::quick_error;
-use std::ops::{AddAssign, RangeInclusive};
+use std::fmt;
+use std::fmt::{Display, Formatter};
+use std::ops::{Add, AddAssign, RangeInclusive};
 
 #[cfg(test)]
 mod tests;
@@ -15,9 +17,24 @@ impl ByteAddress {
     }
 }
 
+impl Add<i16> for ByteAddress {
+    type Output = ByteAddress;
+    fn add(self, offset: i16) -> ByteAddress {
+        let mut c = self;
+        c += offset;
+        c
+    }
+}
+
 impl AddAssign<i16> for ByteAddress {
     fn add_assign(&mut self, offset: i16) {
-        self.0 = self.0.wrapping_add(offset as u16);
+        self.0 = (self.0 as i16 + offset) as u16
+    }
+}
+
+impl Display for ByteAddress {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{:}", self.0)
     }
 }
 
@@ -62,8 +79,6 @@ impl Memory {
 pub struct StoryFile {
     mem: Memory,
 }
-
-struct Header<'a>(&'a [u8]);
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
@@ -227,6 +242,11 @@ const TRANSCRIPTING_ON: Flag = Flag(FLAGS_2, Bit(0));
 // 1: Game sets to force printing in fixed-pitch font
 const FORCE_FIXED_PITCH_FONT: Flag = Flag(FLAGS_2, Bit(1));
 
+fn get_bit(byte: u8, bit: u8) -> bool {
+    assert!(bit < 8);
+    byte & (1 << bit) != 0
+}
+
 fn get_bits(byte: u8, range: RangeInclusive<u8>) -> u8 {
     if range.start() > range.end() {
         return 0;
@@ -239,25 +259,29 @@ fn get_bits(byte: u8, range: RangeInclusive<u8>) -> u8 {
 }
 
 #[derive(Debug)]
-pub struct ErrorLocation {
-    addr: ByteAddress,
-    instr_bytes: Vec<u8>,
+pub struct InstructionLocation {
+    start_addr: ByteAddress,
+    bytes: Vec<u8>,
 }
 
 quick_error! {
     #[derive(Debug)]
     pub enum RuntimeError {
-        ProgramCounterOutOfRange(loc: ErrorLocation) {
+        ProgramCounterOutOfRange(loc: InstructionLocation) {
             display("program counter out of range at {:?}", loc)
         }
-        InvalidInstruction(opcode: u8, loc: ErrorLocation) {
+        InvalidInstruction(opcode: u8, loc: InstructionLocation) {
             display("invalid instruction {:?} at {:?}", opcode, loc)
         }
-        TooManyOperands(types: u8, loc: ErrorLocation) {
-            display("too many operand types {:#b} at {:?}", types, loc)
+        InvalidOperandCount(opcode: Opcode, expected: usize, actual: usize, loc: InstructionLocation) {
+            display("invalid operand count for opcode {:?}: expected {:?} but got {:?} at {:?}",
+                    opcode, expected, actual, loc)
         }
-        InvalidOperandTypes(types: u8, loc: ErrorLocation) {
+        InvalidOperandTypes(types: u8, loc: InstructionLocation) {
             display("invalid operand types {:#b} at {:?}", types, loc)
+        }
+        UnknownOpcode(operand_count: OperandCount, opcode_number: u8, loc: InstructionLocation) {
+            display("unknown {:?} opcode {:?} at {:?}", operand_count, opcode_number, loc)
         }
     }
 }
@@ -298,37 +322,37 @@ impl<'a> InstructionDecoder<'a> {
         // https://ericlippert.com/2016/03/09/canyon-view/
         // https://ericlippert.com/2016/03/11/end-of-rainbow/
 
-        let opcode = self.next_byte().ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc()))?;
-        let instruction_form = self.instruction_form(opcode)?;
-        let operand_count = self.operand_count(instruction_form, opcode)?;
-        let opcode_number = self.read_opcode_number(instruction_form, opcode)?;
-        let operand_types = self.read_operand_types(instruction_form, opcode, opcode_number)?;
+        let opcode_byte = self.next_u8()?;
+        let instruction_form = self.instruction_form(opcode_byte)?;
+        let operand_count = self.operand_count(instruction_form, opcode_byte)?;
+        let opcode_number = self.read_opcode_number(instruction_form, opcode_byte)?;
+        let opcode = self.find_opcode(operand_count, opcode_number)?;
+        let operand_types = self.read_operand_types(instruction_form, opcode_byte, opcode_number)?;
+        let operands = self.read_operands(opcode, operand_count, &operand_types)?;
+        let store_var = self.read_store_var(opcode)?;
+        let branch = self.read_branch(opcode)?;
 
-        let instr = match (operand_count, opcode_number) {
-            (OperandCount::Zero, 0x04) => Instruction::Nop,
-            _ => return Err(RuntimeError::InvalidInstruction(opcode, self.loc())),
-        };
-
-        Ok(instr)
+        Ok(Instruction {
+            opcode: opcode,
+            operands: operands,
+            store_var: store_var,
+            branch: branch,
+        })
     }
 
-    pub fn next_addr(&self) -> ByteAddress {
-        self.next_addr
-    }
-
-    fn instruction_form(&self, opcode: u8) -> Result<InstructionForm, RuntimeError> {
-        match get_bits(opcode, 6..=7) {
+    fn instruction_form(&self, opcode_byte: u8) -> Result<InstructionForm, RuntimeError> {
+        match get_bits(opcode_byte, 6..=7) {
             // 4.3
             // ... If the top two bits of the opcode are $$11 the form is variable; ...
             0b11 => Ok(InstructionForm::Variable),
             // ... if $$10, the form is short.
             0b10 => Ok(InstructionForm::Short),
             0b01 | 0b00 => {
-                if opcode == 190 {
+                if opcode_byte == 190 {
                     // If the opcode is 190 ($BE in hexadecimal) and the version is 5 or later, the
                     // form is "extended". ...
                     match self.version {
-                        V1 | V2 | V3 => Err(RuntimeError::InvalidInstruction(opcode, self.loc()))
+                        V1 | V2 | V3 => Err(RuntimeError::InvalidInstruction(opcode_byte, self.loc()))
                     }
                 } else {
                     // ... Otherwise, the form is "long".
@@ -339,13 +363,13 @@ impl<'a> InstructionDecoder<'a> {
         }
     }
 
-    fn operand_count(&self, instruction_form: InstructionForm, opcode: u8) -> Result<OperandCount, RuntimeError> {
+    fn operand_count(&self, instruction_form: InstructionForm, opcode_byte: u8) -> Result<OperandCount, RuntimeError> {
         match instruction_form {
             // 4.3.1
             // In short form, bits 4 and 5 of the opcode byte give an operand type as above. If
             // this is $11 then the operand count is 0OP; otherwise, 1OP.
             InstructionForm::Short => {
-                if get_bits(opcode, 4..=5) == 0b11 {
+                if get_bits(opcode_byte, 4..=5) == 0b11 {
                     Ok(OperandCount::Zero)
                 } else {
                     Ok(OperandCount::One)
@@ -358,7 +382,7 @@ impl<'a> InstructionDecoder<'a> {
             // In variable form, if bit 5 is 0 then the count is 2OP; if it is 1, then the count is
             // VAR.
             InstructionForm::Variable => {
-                if get_bits(opcode, 5..=5) == 0 {
+                if get_bits(opcode_byte, 5..=5) == 0 {
                     Ok(OperandCount::Two)
                 } else {
                     Ok(OperandCount::Var)
@@ -370,31 +394,115 @@ impl<'a> InstructionDecoder<'a> {
         }
     }
 
-    fn read_opcode_number(&mut self, instruction_form: InstructionForm, opcode: u8) -> Result<u8, RuntimeError> {
+    fn read_opcode_number(&mut self, instruction_form: InstructionForm, opcode_byte: u8) -> Result<u8, RuntimeError> {
         match instruction_form {
             // 4.3.1
             // In short form, ... In either case the opcode number is given in the bottom 4 bits.
-            InstructionForm::Short => Ok(get_bits(opcode, 0..=4)),
+            InstructionForm::Short => Ok(get_bits(opcode_byte, 0..=3)),
             // 4.3.2
             // In long form ... The opcode number is given in the bottom 5 bits.
-            InstructionForm::Long => Ok(get_bits(opcode, 0..=4)),
+            InstructionForm::Long => Ok(get_bits(opcode_byte, 0..=4)),
             // 4.3.3
             // In variable form ... The opcode number is given in the bottom 5 bits.
-            InstructionForm::Variable => Ok(get_bits(opcode, 0..=5)),
+            InstructionForm::Variable => Ok(get_bits(opcode_byte, 0..=4)),
             // 4.3.4
             // In extended form, ... The opcode number is given in a second opcode byte.
-            InstructionForm::Extended => self.next_byte().ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc())),
+            InstructionForm::Extended => Ok(self.next_u8()?),
         }
     }
 
-    fn read_operand_types(&mut self, instruction_form: InstructionForm, opcode: u8, opcode_number: u8) -> Result<Vec<OperandType>, RuntimeError> {
+    fn find_opcode(&self, operand_count: OperandCount, opcode_number: u8) -> Result<Opcode, RuntimeError> {
+        Ok(match operand_count {
+            OperandCount::Two => match opcode_number {
+                0x01 => Opcode::Je,
+                0x02 => Opcode::Jl,
+                0x03 => Opcode::Jg,
+                0x04 => Opcode::DecChk,
+                0x05 => Opcode::IncChk,
+                0x06 => Opcode::Jin,
+                0x07 => Opcode::Test,
+                0x08 => Opcode::Or,
+                0x09 => Opcode::And,
+                0x0a => Opcode::TestAttr,
+                0x0b => Opcode::SetAttr,
+                0x0c => Opcode::ClearAttr,
+                0x0d => Opcode::Store,
+                0x0e => Opcode::InsertObj,
+                0x0f => Opcode::Loadw,
+                0x10 => Opcode::Loadb,
+                0x11 => Opcode::GetProp,
+                0x12 => Opcode::GetPropAddr,
+                0x13 => Opcode::GetNextProp,
+                0x14 => Opcode::Add,
+                0x15 => Opcode::Sub,
+                0x16 => Opcode::Mul,
+                0x17 => Opcode::Div,
+                0x18 => Opcode::Mod,
+                _ => return Err(RuntimeError::UnknownOpcode(operand_count, opcode_number, self.loc()))
+            }
+            OperandCount::One => match opcode_number {
+                0x00 => Opcode::Jz,
+                0x01 => Opcode::GetSibling,
+                0x02 => Opcode::GetChild,
+                0x03 => Opcode::GetParent,
+                0x04 => Opcode::GetPropLen,
+                0x05 => Opcode::Inc,
+                0x06 => Opcode::Dec,
+                0x07 => Opcode::PrintAddr,
+                0x09 => Opcode::RemoveObj,
+                0x0a => Opcode::PrintObj,
+                0x0b => Opcode::Ret,
+                0x0c => Opcode::Jump,
+                0x0d => Opcode::PrintPaddr,
+                0x0e => Opcode::Load,
+                0x0f => Opcode::Not,
+                _ => return Err(RuntimeError::UnknownOpcode(operand_count, opcode_number, self.loc()))
+            }
+            OperandCount::Zero => match opcode_number {
+                0x00 => Opcode::Rtrue,
+                0x01 => Opcode::Rfalse,
+                0x02 => Opcode::Print,
+                0x03 => Opcode::PrintRet,
+                0x04 => Opcode::Nop,
+                0x05 => Opcode::Save,
+                0x06 => Opcode::Restore,
+                0x07 => Opcode::Restart,
+                0x08 => Opcode::RetPopped,
+                0x09 => Opcode::Pop,
+                0x0a => Opcode::Quit,
+                0x0b => Opcode::NewLine,
+                0x0c => Opcode::ShowStatus,
+                0x0d => Opcode::Verify,
+                _ => return Err(RuntimeError::UnknownOpcode(operand_count, opcode_number, self.loc()))
+            }
+            OperandCount::Var => match opcode_number {
+                0x00 => Opcode::Call,
+                0x01 => Opcode::Storew,
+                0x02 => Opcode::Storeb,
+                0x03 => Opcode::PutProp,
+                0x04 => Opcode::Sread,
+                0x05 => Opcode::PrintChar,
+                0x06 => Opcode::PrintNum,
+                0x07 => Opcode::Random,
+                0x08 => Opcode::Push,
+                0x09 => Opcode::Pull,
+                0x0a => Opcode::SplitWindow,
+                0x0b => Opcode::SetWindow,
+                0x13 => Opcode::OutputStream,
+                0x14 => Opcode::InputStream,
+                _ => return Err(RuntimeError::UnknownOpcode(operand_count, opcode_number, self.loc()))
+            }
+        })
+    }
+
+    fn read_operand_types(&mut self, instruction_form: InstructionForm, opcode_byte: u8, opcode_number: u8) -> Result<Vec<OperandType>, RuntimeError> {
         // 4.4
         // Next, the types of the operands are specified.
         match instruction_form {
             // 4.4.1
             // In short form, bits 4 and 5 of the opcode give the type.
             InstructionForm::Short => Ok(vec![
-                OperandType::from_bits(get_bits(opcode, 4..=5)),
+                OperandType::from_bits(get_bits(opcode_byte, 4..=5)),
             ]),
             // 4.4.2
             // In long form, bit 6 of the opcode gives the type of the first operand, bit 5 of the
@@ -402,8 +510,8 @@ impl<'a> InstructionDecoder<'a> {
             // instruction needs a large constant as operand, then it should be assembled in variable
             // rather than long form.)
             InstructionForm::Long => Ok(vec![
-                OperandType::from_bit(get_bits(opcode, 6..=6)),
-                OperandType::from_bit(get_bits(opcode, 5..=5)),
+                OperandType::from_bit(get_bits(opcode_byte, 6..=6)),
+                OperandType::from_bit(get_bits(opcode_byte, 5..=5)),
             ]),
             // 4.4.3
             // In variable or extended forms, a byte of 4 operand types is given next. This contains 4
@@ -420,7 +528,7 @@ impl<'a> InstructionDecoder<'a> {
                 let mut types = Vec::with_capacity(4 * num_bytes);
                 let mut expect_omitted = false;
                 for i in 0..num_bytes {
-                    let byte = self.next_byte().ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc()))?;
+                    let byte = self.next_u8()?;
                     for &start_bit in &[6, 4, 2, 0] {
                         let operand_type = OperandType::from_bits(get_bits(byte, start_bit..=start_bit + 1));
                         match operand_type {
@@ -435,29 +543,230 @@ impl<'a> InstructionDecoder<'a> {
                             }
                         }
                     }
-                    if instruction_form == InstructionForm::Extended && types.len() > 2 {
-                        return Err(RuntimeError::TooManyOperands(byte, self.loc()));
-                    }
                 }
                 Ok(types)
             },
         }
     }
 
-    fn next_byte(&mut self) -> Option<u8> {
-        let b = self.z.get_u8(self.next_addr);
-        if b.is_some() {
-            // TODO this might overflow even if we never read the next byte!
-            self.next_addr += 1;
+    fn read_operands(&mut self, opcode: Opcode, operand_count: OperandCount, operand_types: &Vec<OperandType>) -> Result<Vec<Operand>, RuntimeError> {
+        // 4.5
+        // The operands are given next. Operand counts of 0OP, 1OP or 2OP require 0, 1 or 2
+        // operands to be given, respectively. If the count is VAR, there must be as many operands
+        // as there were types other than 'omitted'.
+        let mut operands = Vec::with_capacity(operand_types.len());
+        for operand_type in operand_types {
+            match operand_type {
+                OperandType::LargeConstant => operands.push(Operand::LargeConstant(self.next_u16()?)),
+                OperandType::SmallConstant => operands.push(Operand::SmallConstant(self.next_u8()?)),
+                OperandType::Variable => operands.push(Operand::Variable(Variable::from_byte(self.next_u8()?))),
+                OperandType::Omitted => {}
+            }
         }
-        b
+        if let Some(expected_operand_count) = operand_count.count() {
+            let actual_operand_count = operands.len();
+            if actual_operand_count != expected_operand_count {
+                return Err(RuntimeError::InvalidOperandCount(opcode, expected_operand_count, actual_operand_count, self.loc()));
+            }
+        }
+        Ok(operands)
     }
 
-    fn loc(&self) -> ErrorLocation {
-        ErrorLocation {
-            addr: self.start_addr,
-            instr_bytes: (self.start_addr.to_index()..self.next_addr.to_index())
+    fn read_store_var(&mut self, opcode: Opcode) -> Result<Option<Variable>, RuntimeError> {
+        // 4.6
+        // "Store" instructions return a value: e.g., mul multiplies its two operands together.
+        // Such instructions must be followed by a single byte giving the variable number of where
+        // to put the result.
+        if opcode.has_store() {
+            Ok(Some(Variable::from_byte(self.next_u8()?)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn read_branch(&mut self, opcode: Opcode) -> Result<Option<Branch>, RuntimeError> {
+        // 4.7
+        // Instructions which test a condition are called "branch" instructions.
+        if opcode.has_branch() {
+            // The branch information is stored in one or two bytes, indicating what to do with the
+            // result of the test.
+            let first_byte = self.next_u8()?;
+
+            // If bit 7 of the first byte is 0, a branch occurs when the condition was false; if 1,
+            // then branch is on true.
+            let branch_on_true = get_bit(first_byte, 7);
+
+            let offset = if get_bit(first_byte, 6) {
+                // If bit 6 is set, then the branch occupies 1 byte only, and the "offset" is in
+                // the range 0 to 63, given in the bottom 6 bits.
+                get_bits(first_byte, 0..=5) as i16
+            } else {
+                // If bit 6 is clear, then the offset is a signed 14-bit number given in bits 0 to
+                // 5 of the first byte followed by all 8 of the second.
+                let second_byte = self.next_u8()?;
+                let unsigned_offset = (((get_bits(first_byte, 0..=5) as u16) << 8) | second_byte as u16) as i16;
+                if unsigned_offset & (1i16 << 13) == 0 {
+                    unsigned_offset
+                } else {
+                    unsigned_offset - (1i16 << 14)
+                }
+            };
+
+            let target = match offset {
+                // 4.7.1
+                // An offset of 0 means "return false from the current routine", ...
+                0 => BranchTarget::ReturnFalse,
+                // ... and 1 means "return true from the current routine".
+                1 => BranchTarget::ReturnTrue,
+                // 4.7.2
+                // Otherwise, a branch moves execution to the instruction at address
+                // "Address after branch data + Offset - 2".
+                _ => BranchTarget::ToAddress(self.next_addr + (offset - 2))
+            };
+
+            Ok(Some(Branch {
+                on_true: branch_on_true,
+                target: target,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn next_u8(&mut self) -> Result<u8, RuntimeError> {
+        let b = self.z.get_u8(self.next_addr)
+            .ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc()))?;
+        // TODO this might overflow even if we never read the next byte!
+        self.next_addr += 1;
+        Ok(b)
+    }
+
+    fn next_u16(&mut self) -> Result<u16, RuntimeError> {
+        let w = self.z.get_u16(self.next_addr)
+            .ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc()))?;
+        // TODO this might overflow even if we never read the next byte!
+        self.next_addr += 2;
+        Ok(w)
+    }
+
+    fn loc(&self) -> InstructionLocation {
+        InstructionLocation {
+            start_addr: self.start_addr,
+            bytes: (self.start_addr.to_index()..self.next_addr.to_index())
                 .map(|i| self.z.get_u8(ByteAddress(i as u16)).unwrap()).collect(),
+        }
+    }
+
+    pub fn next_addr(&self) -> ByteAddress {
+        self.next_addr
+    }
+}
+
+#[derive(Debug)]
+struct Instruction {
+    opcode: Opcode,
+    operands: Vec<Operand>,
+    store_var: Option<Variable>,
+    branch: Option<Branch>,
+}
+
+// 14. Complete table of opcodes
+#[derive(Debug, Clone, Copy)]
+pub enum Opcode {
+    // Two-operand opcodes 2OP
+    Je,
+    Jl,
+    Jg,
+    DecChk,
+    IncChk,
+    Jin,
+    Test,
+    Or,
+    And,
+    TestAttr,
+    SetAttr,
+    ClearAttr,
+    Store,
+    InsertObj,
+    Loadw,
+    Loadb,
+    GetProp,
+    GetPropAddr,
+    GetNextProp,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    // One-operand opcodes 1OP
+    Jz,
+    GetSibling,
+    GetChild,
+    GetParent,
+    GetPropLen,
+    Inc,
+    Dec,
+    PrintAddr,
+    RemoveObj,
+    PrintObj,
+    Ret,
+    Jump,
+    PrintPaddr,
+    Load,
+    Not,
+    // Zero-operand opcodes 0OP
+    Rtrue,
+    Rfalse,
+    Print,
+    PrintRet,
+    Nop,
+    Save,
+    Restore,
+    Restart,
+    RetPopped,
+    Pop,
+    Quit,
+    NewLine,
+    ShowStatus,
+    Verify,
+    // Variable-operand opcodes VAR
+    Call,
+    Storew,
+    Storeb,
+    PutProp,
+    Sread,
+    PrintChar,
+    PrintNum,
+    Random,
+    Push,
+    Pull,
+    SplitWindow,
+    SetWindow,
+    OutputStream,
+    InputStream,
+    // Extended opcodes EXT
+    // None supported at the moment.
+}
+
+impl Opcode {
+    fn has_store(&self) -> bool {
+        match self {
+            Opcode::Or | Opcode::And | Opcode::Loadw | Opcode::Loadb | Opcode::GetProp |
+                Opcode::GetPropAddr | Opcode::GetNextProp | Opcode::Add | Opcode::Sub | Opcode::Mul
+                | Opcode::Div | Opcode::Mod | Opcode::GetSibling | Opcode::GetChild |
+                Opcode::GetParent | Opcode::GetPropLen | Opcode::Load | Opcode::Not | Opcode::Call
+                | Opcode::Random => true,
+            _ => false,
+        }
+    }
+
+    fn has_branch(&self) -> bool {
+        match self {
+            Opcode::Je | Opcode::Jl | Opcode::Jg | Opcode::DecChk | Opcode::IncChk | Opcode::Jin |
+                Opcode::Test | Opcode::TestAttr | Opcode::Jz | Opcode::GetSibling |
+                Opcode::GetChild | Opcode::GetParent | Opcode::Save | Opcode::Restore |
+                Opcode::Verify => true,
+            _ => false,
         }
     }
 }
@@ -504,14 +813,25 @@ impl OperandType {
     }
 }
 
-// 4.2.2
-// Variable number $00 refers to the top of the stack, $01 to $0f mean the local variables of the
-// current routine and $10 to $ff mean the global variables. It is illegal to refer to local
-// variables which do not exist for the current routine (there may even be none).
+#[derive(Debug, Clone, Eq, PartialEq)]
 enum Variable {
     TopOfStack,
     Local(u8),
     Global(u8),
+}
+
+impl Variable {
+    fn from_byte(byte: u8) -> Variable {
+        // 4.2.2
+        match byte {
+            // Variable number $00 refers to the top of the stack, ...
+            0 => Variable::TopOfStack,
+            // ... $01 to $0f mean the local variables of the current routine ...
+            0x01..=0x0f => Variable::Local(byte),
+            // ... and $10 to $ff mean the global variables.
+            _ => Variable::Global(byte),
+        }
+    }
 }
 
 // 4.3
@@ -527,13 +847,25 @@ enum InstructionForm {
 // 4.3 (continued)
 // ... and an operand count (0OP, 1OP, 2OP or VAR).
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum OperandCount {
+pub enum OperandCount {
     Zero,
     One,
     Two,
     Var,
 }
 
+impl OperandCount {
+    fn count(&self) -> Option<usize> {
+        match self {
+            OperandCount::Zero => Some(0),
+            OperandCount::One => Some(1),
+            OperandCount::Two => Some(2),
+            OperandCount::Var => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
 enum Operand {
     // 4.2.1
     // Large constants, like all 2-byte words of data in the Z-machine, are stored with most
@@ -551,8 +883,19 @@ enum Operand {
     Variable(Variable),
 }
 
-enum Instruction {
-    Nop,
+type VarOperands = Vec<Operand>;
+
+#[derive(Debug)]
+struct Branch {
+    on_true: bool,
+    target: BranchTarget,
+}
+
+#[derive(Debug)]
+enum BranchTarget {
+    ReturnFalse,
+    ReturnTrue,
+    ToAddress(ByteAddress),
 }
 
 impl<'a> ZMachine<'a> {
@@ -575,6 +918,7 @@ impl<'a> ZMachine<'a> {
 
     pub fn step(&mut self) -> Result<(), RuntimeError> {
         let (instr, next_pc) = self.decode_next_instr()?;
+        println!("{:?}", instr);
         self.pc = next_pc;
         Ok(())
     }
@@ -622,6 +966,11 @@ impl<'a> ZMachine<'a> {
         self.dyn_mem.get_u8(addr).or_else(|| self.s.mem.get_u8(addr))
     }
 
+    fn get_u16(&self, addr: ByteAddress) -> Option<u16> {
+        // TODO breaks if it crosses the boundary between static and dynamic
+        self.dyn_mem.get_u16(addr).or_else(|| self.s.mem.get_u16(addr))
+    }
+
     fn decode_next_instr(&self) -> Result<(Instruction, ByteAddress), RuntimeError> {
         let mut decoder = InstructionDecoder::new(self);
         let instr = decoder.decode()?;
@@ -630,5 +979,11 @@ impl<'a> ZMachine<'a> {
 
     fn version(&self) -> Version {
         self.s.version()
+    }
+}
+
+impl<'a> Display for ZMachine<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "pc: {:}", self.pc)
     }
 }

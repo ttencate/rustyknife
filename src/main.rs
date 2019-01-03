@@ -20,5 +20,6 @@ fn main() {
     let mut z = ZMachine::new(&s);
     loop {
         z.step().unwrap();
+        println!("{:}", z);
     }
 }
