@@ -1,4 +1,4 @@
-use rustyknife::ZMachine;
+use rustyknife::{StoryFile, ZMachine};
 use std::fs;
 use std::path::PathBuf;
 use structopt::StructOpt;
@@ -15,6 +15,10 @@ fn main() {
 
     let story_file = fs::read(&opts.story_file)
         .expect(&format!("could not read game file {:?}", &opts.story_file));
-    let z = ZMachine::from_bytes(story_file)
+    let s = StoryFile::from_bytes(story_file)
         .expect(&format!("error in story file {:?}", &opts.story_file));
+    let mut z = ZMachine::new(&s);
+    loop {
+        z.step().unwrap();
+    }
 }
