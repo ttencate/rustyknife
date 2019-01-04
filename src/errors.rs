@@ -1,6 +1,6 @@
 use crate::bytes::Address;
 use crate::decoder::OperandCount;
-use crate::instr::{Instruction, Global, Local};
+use crate::instr::{Global, Local};
 use quick_error::quick_error;
 
 quick_error! {
@@ -22,8 +22,8 @@ quick_error! {
         UnknownOpcode(operand_count: OperandCount, opcode_number: u8, loc: ErrorLocation) {
             display("unknown {:?} opcode {:?} at {:?}", operand_count, opcode_number, loc)
         }
-        NotEnoughOperands(instr: Instruction, loc: ErrorLocation) {
-            display("not enough arguments to {:?} instruction at {:?}", instr, loc)
+        NotEnoughOperands(idx: usize, num_operands: usize) {
+            display("cannot get operand {:} of {:}", idx, num_operands)
         }
         StackEmpty {
             display("attempt to read top of stack while the stack was empty")
@@ -36,6 +36,12 @@ quick_error! {
         }
         InvalidRoutineHeader(addr: Address) {
             display("invalid routine header at {:}", addr)
+        }
+        StackOverflow {
+            display("stack overflow")
+        }
+        CallStackOverflow {
+            display("call stack overflow")
         }
     }
 }

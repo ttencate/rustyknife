@@ -1,4 +1,6 @@
 use crate::bytes::Address;
+use crate::errors::RuntimeError;
+use std::ops::Range;
 
 // Instruction does not implement Copy because it potentially contains big strings (the Print and
 // PrintRet opcodes).
@@ -143,7 +145,36 @@ pub enum Operand {
     Variable(Variable),
 }
 
-pub type VarOperands = Vec<Operand>;
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct VarOperands(Vec<Operand>);
+
+impl VarOperands {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn get(&self, idx: usize) -> Result<Operand, RuntimeError> {
+        if idx < self.len() {
+            Ok(self.0[idx])
+        } else {
+            Err(RuntimeError::NotEnoughOperands(idx, self.len()))
+        }
+    }
+
+    pub fn get_slice(&self, range: Range<usize>) -> Result<&[Operand], RuntimeError> {
+        if range.start < self.len() && range.end <= self.len() {
+            Ok(&self.0[range])
+        } else {
+            Err(RuntimeError::NotEnoughOperands(range.end - 1, self.len()))
+        }
+    }
+}
+
+impl From<Vec<Operand>> for VarOperands {
+    fn from(operands: Vec<Operand>) -> VarOperands {
+        VarOperands(operands)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Branch {

@@ -1,10 +1,13 @@
 use crate::bytes::Address;
 use crate::decoder::InstructionDecoder;
-use crate::errors::{ErrorLocation, RuntimeError};
+use crate::errors::RuntimeError;
 use crate::instr::*;
 use crate::mem::*;
 use std::fmt;
 use std::fmt::{Display, Formatter};
+
+const STACK_SIZE_LIMIT: usize = 0x10000;
+const CALL_STACK_SIZE_LIMIT: usize = 0x10000;
 
 pub struct ZMachine<'a> {
     story_file: &'a Memory,
@@ -39,16 +42,16 @@ impl<'a> ZMachine<'a> {
 
     pub fn step(&mut self) -> Result<(), RuntimeError> {
         let mut decoder = InstructionDecoder::new(&self.mem, self.pc);
-        let (instr, loc) = decoder.decode()?;
-        let next_pc = decoder.next_addr();
+        let (instr, _loc) = decoder.decode()?;
+        self.pc = decoder.next_addr();
 
         println!("{:}  {:?}", self.pc, instr);
-        self.pc = self.exec_instr(instr, loc)?.unwrap_or(next_pc);
-        Ok(())
+        // TODO in case of any error, annotate it with location somehow
+        self.exec_instr(instr)
     }
 
-    fn exec_instr(&mut self, instr: Instruction, loc: ErrorLocation) -> Result<Option<Address>, RuntimeError> {
-        match &instr {
+    fn exec_instr(&mut self, instr: Instruction) -> Result<(), RuntimeError> {
+        match instr {
             // Instruction::Je(left, right, branch) =>
             // Instruction::Jl(left, right, branch) =>
             // Instruction::Jg(left, right, branch) =>
@@ -68,7 +71,9 @@ impl<'a> ZMachine<'a> {
             // Instruction::GetProp(left, right, store) =>
             // Instruction::GetPropAddr(left, right, store) =>
             // Instruction::GetNextProp(left, right, store) =>
-            // Instruction::Add(left, right, store) =>
+            Instruction::Add(left, right, store) => {
+                self.store(self.eval(left)?.wrapping_add(self.eval(right)?), store)?;
+            }
             // Instruction::Sub(left, right, store) =>
             // Instruction::Mul(left, right, store) =>
             // Instruction::Div(left, right, store) =>
@@ -104,11 +109,15 @@ impl<'a> ZMachine<'a> {
             // Instruction::Verify(branch) =>
             Instruction::Call(var_operands, store) => {
                 self.call(
-                    *var_operands.get(0).ok_or(RuntimeError::NotEnoughOperands(instr.clone(), loc))?,
-                    &var_operands[1..],
-                    *store)?;
+                    var_operands.get(0)?,
+                    var_operands.get_slice(1..var_operands.len())?,
+                    store)?;
             }
-            // Instruction::Storew(var_operands) =>
+            // Instruction::Storew(var_operands) => {
+            //     let array = self.eval(var_operands.get(0)?)?;
+            //     let word_index = self.eval(var_operands.get(1)?)?;
+            //     let value = self.eval(var_operands.get(2)?)?;
+            // }
             // Instruction::Storeb(var_operands) =>
             // Instruction::PutProp(var_operands) =>
             // Instruction::Sread(var_operands) =>
@@ -123,7 +132,7 @@ impl<'a> ZMachine<'a> {
             // Instruction::InputStream(var_operands) =>
             _ => panic!("TODO implement instruction {:?}", instr)
         }
-        Ok(None)
+        Ok(())
     }
 
     fn reset(&mut self) {
@@ -158,44 +167,46 @@ impl<'a> ZMachine<'a> {
         // executed; in Versions 4 and later, when timed keyboard input is being monitored; in
         // Versions 5 and later, when a sound effect finishes; in Version 6, when the game begins
         // (to call the "main" routine); in Version 6, when a "newline interrupt" occurs.
-        //
-        // 6.4.1
-        // A routine call may have any number of arguments, from 0 to 3 (in Versions 1 to
-        // 3) or 0 to 7 (Versions 4 and later). All routines return a value (though sometimes this
-        // value is thrown away afterward: for example by opcodes in the form call_vn*).
-        // 
-        // 6.4.2
-        // Routine calls preserve local variables and the stack (except when the return value is
-        // stored in a local variable or onto the top of the stack).
-        // 
+
         // 6.4.3
         // A routine call to packed address 0 is legal: it does nothing and returns false (0).
         // Otherwise it is illegal to call a packed address where no routine is present.
-        // 
+        let dest = Address::from_packed_address(self.eval(dest)?, self.version());
+        if dest == Address::from_packed_address(0, self.version()) {
+            return self.return_(0);
+        }
+        
+        // 6.4.4
+        // When a routine is called, its local variables are created with initial values taken from
+        // the routine header (Versions 1 to 4) or with initial value 0 (Versions 5 and later). ...
+        let (mut frame, next_pc) = StackFrame::from_routine_header(&self.mem, dest, store, self.pc)?;
+
+        // ... Next, the arguments are written into the local variables (argument 1 into local 1
+        // and so on).
+        //
         // 6.4.4.1
         // It is legal for there to be more arguments than local variables (any spare arguments are
         // thrown away) or for there to be fewer.
-        // 
-        // 6.4.5
-        // The return value of a routine can be any Z-machine number. Returning 'false' means
-        // returning 0; returning 'true' means returning 1.
-
-        // 6.4.4
-        // When a routine is called, its local variables are created with initial values taken from
-        // the routine header (Versions 1 to 4) or with initial value 0 (Versions 5 and later).
-        let (mut frame, next_pc) = StackFrame::from_routine_header(
-            &self.mem, Address::from_packed_address(self.eval(dest)?, self.version()), store)?;
-
-        // Next, the arguments are written into the local variables (argument 1 into local 1 and so
-        // on).
         for i in 0..(std::cmp::min(args.len(), frame.num_locals())) {
             frame.set_local(Local::from_index(i), self.eval(args[i])?)?;
         }
 
+        if self.call_stack.len() >= CALL_STACK_SIZE_LIMIT {
+            return Err(RuntimeError::CallStackOverflow);
+        }
         self.call_stack.push(frame);
         self.pc = next_pc;
-
         Ok(())
+    }
+
+    fn return_(&mut self, _value: u16) -> Result<(), RuntimeError> {
+        // 6.4.1
+        // ... All routines return a value (though sometimes this value is thrown away afterward:
+        // for example by opcodes in the form call_vn*).
+        // 6.4.5
+        // The return value of a routine can be any Z-machine number. Returning 'false' means
+        // returning 0; returning 'true' means returning 1.
+        panic!("TODO implement return");
     }
 
     fn eval(&self, operand: Operand) -> Result<u16, RuntimeError> {
@@ -203,11 +214,22 @@ impl<'a> ZMachine<'a> {
             Operand::LargeConstant(c) => Ok(c),
             Operand::SmallConstant(c) => Ok(c as u16),
             Operand::Variable(var) => match var {
-                Variable::TopOfStack => self.call_stack_top().stack_top(),
-                Variable::Local(local) => self.call_stack_top().local(local),
+                Variable::TopOfStack => self.frame().stack_top(),
+                Variable::Local(local) => self.frame().local(local),
                 Variable::Global(global) => self.mem.global(global)
                     .ok_or(RuntimeError::InvalidGlobal(global)),
             }
+        }
+    }
+
+    fn store(&mut self, value: u16, store: Store) -> Result<(), RuntimeError> {
+        match store {
+            // 6.3
+            // Writing to the stack pointer (variable number $00) pushes a value onto the stack;
+            Variable::TopOfStack => self.frame_mut().push(value),
+            Variable::Local(local) => self.frame_mut().set_local(local, value),
+            Variable::Global(global) => self.mem.set_global(global, value)
+                .ok_or(RuntimeError::InvalidGlobal(global)),
         }
     }
 
@@ -215,8 +237,12 @@ impl<'a> ZMachine<'a> {
         self.mem.version()
     }
 
-    fn call_stack_top(&self) -> &StackFrame {
+    fn frame(&self) -> &StackFrame {
         self.call_stack.last().unwrap()
+    }
+
+    fn frame_mut(&mut self) -> &mut StackFrame {
+        self.call_stack.last_mut().unwrap()
     }
 }
 
@@ -230,6 +256,7 @@ struct StackFrame {
     stack: Vec<u16>,
     locals: Vec<u16>,
     store: Store,
+    return_addr: Address,
 }
 
 impl StackFrame {
@@ -238,10 +265,11 @@ impl StackFrame {
             stack: vec![],
             locals: vec![],
             store: Variable::TopOfStack, // Unused.
+            return_addr: Address::from_byte_address(0), // Unused.
         }
     }
 
-    fn from_routine_header(mem: &Memory, addr: Address, store: Store) -> Result<(StackFrame, Address), RuntimeError> {
+    fn from_routine_header(mem: &Memory, addr: Address, store: Store, return_addr: Address) -> Result<(StackFrame, Address), RuntimeError> {
         // 5.1
         // A routine is required to begin at an address in memory which can be represented by a
         // packed address (for instance, in Version 5 it must occur at a byte address which is
@@ -288,12 +316,21 @@ impl StackFrame {
             stack: stack,
             locals: locals,
             store: store,
+            return_addr: return_addr,
         };
         Ok((frame, addr))
     }
 
     fn stack_top(&self) -> Result<u16, RuntimeError> {
         Ok(*self.stack.last().ok_or(RuntimeError::StackEmpty)?)
+    }
+
+    fn push(&mut self, value: u16) -> Result<(), RuntimeError> {
+        if self.stack.len() >= STACK_SIZE_LIMIT {
+            return Err(RuntimeError::StackOverflow);
+        }
+        self.stack.push(value);
+        Ok(())
     }
 
     fn num_locals(&self) -> usize {

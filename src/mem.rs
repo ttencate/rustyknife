@@ -98,7 +98,11 @@ impl Memory {
     }
 
     pub fn global(&self, global: Global) -> Option<u16> {
-        self.bytes().get_u16(self.globals_table() + global.index() * 2)
+        self.bytes.get_u16(self.globals_table() + global.index() * 2)
+    }
+
+    pub fn set_global(&mut self, global: Global, val: u16) -> Option<()> {
+        self.bytes.set_u16(self.globals_table() + global.index() * 2, val)
     }
 
     fn static_memory_base(&self) -> Address {

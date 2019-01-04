@@ -295,7 +295,7 @@ impl<'a> InstructionDecoder<'a> {
                 return Err(RuntimeError::InvalidOperandCount(expected_operand_count, actual_operand_count, self.loc()));
             }
         }
-        Ok(operands)
+        Ok(VarOperands::from(operands))
     }
 
     fn read_store_var(&mut self) -> Result<Variable, RuntimeError> {

@@ -38,6 +38,17 @@ impl Bytes {
         Some((*self.0.get(i)? as u16) << 8 | (*self.0.get(i + 1)? as u16))
     }
 
+    pub fn set_u16(&mut self, addr: Address, val: u16) -> Option<()> {
+        let i = addr.to_index();
+        if i + 1 >= self.len() {
+            None
+        } else {
+            self.0[i] = (val >> 8) as u8;
+            self.0[i + 1] = (val & 0xff) as u8;
+            Some(())
+        }
+    }
+
     pub fn get_zstring(&self, addr: Address) -> Option<ZString> {
         // 3.2
         // Text in memory consists of a sequence of 2-byte words. Each word is divided into three 5-bit 'Z-characters', plus 1 bit left over, arranged as
