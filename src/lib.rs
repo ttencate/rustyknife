@@ -1,87 +1,13 @@
 mod bits;
+mod mem;
 #[cfg(test)]
 mod tests;
 
 use crate::bits::*;
+use crate::mem::*;
 use quick_error::quick_error;
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use std::ops::*;
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-pub struct ByteAddress(u16);
-
-impl ByteAddress {
-    fn to_index(&self) -> usize {
-        match self {
-            ByteAddress(a) => *a as usize,
-        }
-    }
-}
-
-impl Add<i16> for ByteAddress {
-    type Output = ByteAddress;
-    fn add(self, offset: i16) -> ByteAddress {
-        let mut c = self;
-        c += offset;
-        c
-    }
-}
-
-impl AddAssign<i16> for ByteAddress {
-    fn add_assign(&mut self, offset: i16) {
-        self.0 = (self.0 as i16 + offset) as u16
-    }
-}
-
-impl Display for ByteAddress {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{:}", self.0)
-    }
-}
-
-struct Memory(Vec<u8>);
-
-impl Memory {
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    fn get_u8(&self, addr: ByteAddress) -> Option<u8> {
-        Some(*self.0.get(addr.to_index())?)
-    }
-
-    fn get_u8_mut(&mut self, addr: ByteAddress) -> Option<&mut u8> {
-        Some(self.0.get_mut(addr.to_index())?)
-    }
-
-    fn get_u16(&self, addr: ByteAddress) -> Option<u16> {
-        // 2.1
-        // In the Z-machine, numbers are usually stored in 2 bytes (in the form
-        // most-significant-byte first, then least-significant) and hold any value in the range
-        // $0000 to $ffff (0 to 65535 decimal).
-        let i = addr.to_index();
-        Some((*self.0.get(i)? as u16) << 8 | (*self.0.get(i + 1)? as u16))
-    }
-
-    fn get_slice(&self, range: Range<ByteAddress>) -> Option<&[u8]> {
-        let s = range.start.to_index();
-        let e = range.end.to_index();
-        if s <= self.len() && e <= self.len() {
-            Some(&self.0[s..e])
-        } else {
-            None
-        }
-    }
-
-    fn as_slice(&self) -> &[u8] {
-        &self.0
-    }
-
-    fn get_byte_address(&self, addr: ByteAddress) -> Option<ByteAddress> {
-        Some(ByteAddress(self.get_u16(addr)?))
-    }
-}
 
 pub struct StoryFile {
     mem: Memory,
@@ -136,7 +62,7 @@ impl StoryFile {
         }
 
         let s = StoryFile {
-            mem: Memory(bytes),
+            mem: Memory::from(bytes),
         };
 
         // Version number (1 to 6)
@@ -660,8 +586,7 @@ impl<'a> InstructionDecoder<'a> {
     fn loc(&self) -> InstructionLocation {
         InstructionLocation {
             start_addr: self.start_addr,
-            bytes: (self.start_addr.to_index()..self.next_addr.to_index())
-                .map(|i| self.z.get_u8(ByteAddress(i as u16)).unwrap()).collect(),
+            bytes: self.z.mem.get_slice(self.start_addr..self.next_addr).unwrap().to_vec(),
         }
     }
 
@@ -924,7 +849,7 @@ impl<'a> ZMachine<'a> {
     pub fn new(s: &StoryFile) -> ZMachine {
         let mut z = ZMachine {
             s: s,
-            mem: Memory(vec![0; s.mem.len()]),
+            mem: Memory::with_size(s.mem.len()),
             pc: ByteAddress(0),
         };
         z.restart();
@@ -932,7 +857,7 @@ impl<'a> ZMachine<'a> {
     }
 
     pub fn restart(&mut self) {
-        self.mem.0.copy_from_slice(&self.s.mem.as_slice());
+        self.mem.copy_from(&self.s.mem);
         self.pc = self.s.initial_program_counter();
         self.reset();
     }
