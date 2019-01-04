@@ -45,14 +45,25 @@ impl<'a> ZMachine<'a> {
         let (instr, _loc) = decoder.decode()?;
         self.pc = decoder.next_addr();
 
-        println!("{:}  {:?}", self.pc, instr);
+        println!("{:}{:}{:?}", self.pc, "  ".repeat(self.call_stack.len()), instr);
         // TODO in case of any error, annotate it with location somehow
         self.exec_instr(instr)
     }
 
     fn exec_instr(&mut self, instr: Instruction) -> Result<(), RuntimeError> {
         match instr {
-            // Instruction::Je(left, right, branch) =>
+            Instruction::Je(left, right, branch) => {
+                // je
+                // 2OP:1 1 je a b c d ?(label)
+                // Jump if a is equal to any of the subsequent operands. (Thus @je a never jumps
+                // and @je a b jumps if a = b.)
+                // je with just 1 operand is not permitted.
+                //
+                // I don't see how je could have more or fewer than 2 operands: the opcode is
+                // always in the range 0..=127 so it's considered long form, never variable form.
+                // And long form implies 2OP.
+                self.cond_branch(self.eval(left)? == self.eval(right)?, branch)
+            }
             // Instruction::Jl(left, right, branch) =>
             // Instruction::Jg(left, right, branch) =>
             // Instruction::DecChk(left, right, branch) =>
@@ -66,19 +77,42 @@ impl<'a> ZMachine<'a> {
             // Instruction::ClearAttr(left, right) =>
             // Instruction::store(left, right) =>
             // Instruction::InsertObj(left, right) =>
-            // Instruction::Loadw(left, right, store) =>
+            Instruction::Loadw(left, right, store) => {
+                // loadw
+                // 2OP:15 F loadw array word-index -> (result)
+                // Stores array-->word-index (i.e., the word at address array+2*word-index, which
+                // must lie in static or dynamic memory).
+                let array = self.eval(left)?;
+                let word_index = self.eval(right)?;
+                let addr = Address::from_byte_address(array + 2 * word_index);
+                let val = self.mem.bytes().get_u16(addr).ok_or(RuntimeError::AddressOutOfRange(addr))?;
+                self.store(val, store)
+            }
             // Instruction::Loadb(left, right, store) =>
             // Instruction::GetProp(left, right, store) =>
             // Instruction::GetPropAddr(left, right, store) =>
             // Instruction::GetNextProp(left, right, store) =>
             Instruction::Add(left, right, store) => {
-                self.store(self.eval(left)?.wrapping_add(self.eval(right)?), store)?;
+                // add
+                // 2OP:20 14 add a b -> (result)
+                // Signed 16-bit addition.
+                self.store(self.eval(left)?.wrapping_add(self.eval(right)?), store)
             }
-            // Instruction::Sub(left, right, store) =>
+            Instruction::Sub(left, right, store) => {
+                // sub
+                // 2OP:21 15 sub a b -> (result)
+                // Signed 16-bit subtraction.
+                self.store(self.eval(left)?.wrapping_sub(self.eval(right)?), store)
+            }
             // Instruction::Mul(left, right, store) =>
             // Instruction::Div(left, right, store) =>
             // Instruction::Mod(left, right, store) =>
-            // Instruction::Jz(operand, branch) =>
+            Instruction::Jz(operand, branch) => {
+                // jz
+                // 1OP:128 0 jz a ?(label)
+                // Jump if a = 0.
+                self.cond_branch(self.eval(operand)? == 0, branch)
+            }
             // Instruction::GetSibling(operand, store, branch) =>
             // Instruction::GetChild(operand, store, branch) =>
             // Instruction::GetParent(operand, store) =>
@@ -88,8 +122,28 @@ impl<'a> ZMachine<'a> {
             // Instruction::PrintAddr(operand) =>
             // Instruction::RemoveObj(operand) =>
             // Instruction::PrintObj(operand) =>
-            // Instruction::Ret(operand) =>
-            // Instruction::Jump(operand) =>
+            Instruction::Ret(operand) => {
+                // ret
+                // 1OP:139 B ret value
+                // Returns from the current routine with the value given.
+                self.ret(self.eval(operand)?)
+            }
+            Instruction::Jump(operand) => {
+                // jump
+                // 1OP:140 C jump ?(label)
+                //
+                // Jump (unconditionally) to the given label. (This is not a branch instruction and
+                // the operand is a 2-byte signed offset to apply to the program counter.) It is
+                // legal for this to jump into a different routine (which should not change the
+                // routine call state), although it is considered bad practice to do so and the Txd
+                // disassembler is confused by it.
+                // 
+                // The destination of the jump opcode is:
+                // Address after instruction + Offset - 2
+                // This is analogous to the calculation for branch offsets.
+                self.pc += (self.eval(operand)? as i16 - 2) as i32;
+                Ok(())
+            }
             // Instruction::PrintPaddr(operand) =>
             // Instruction::Load(operand, store) =>
             // Instruction::Not(operand, store) =>
@@ -108,16 +162,26 @@ impl<'a> ZMachine<'a> {
             // Instruction::ShowStatus() =>
             // Instruction::Verify(branch) =>
             Instruction::Call(var_operands, store) => {
-                self.call(
-                    var_operands.get(0)?,
-                    var_operands.get_slice(1..var_operands.len())?,
-                    store)?;
+                // call
+                // VAR:224 0 1 call routine ...up to 3 args... -> (result)
+                // The only call instruction in Version 3, Inform reads this as call_vs in higher
+                // versions: it calls the routine with 0, 1, 2 or 3 arguments as supplied and
+                // stores the resulting return value. (When the address 0 is called as a routine,
+                // nothing happens and the return value is false.)
+                let routine = var_operands.get(0)?;
+                let args = var_operands.get_slice(1..var_operands.len())?;
+                self.call(routine, args, store)
             }
-            // Instruction::Storew(var_operands) => {
-            //     let array = self.eval(var_operands.get(0)?)?;
-            //     let word_index = self.eval(var_operands.get(1)?)?;
-            //     let value = self.eval(var_operands.get(2)?)?;
-            // }
+            Instruction::Storew(var_operands) => {
+                // storew
+                // VAR:225 1 storew array word-index value
+                // array-->word-index = value, i.e. stores the given value in the word at address
+                // array+2*word-index (which must lie in dynamic memory). (See loadw.)
+                let array = self.eval(var_operands.get(0)?)?;
+                let word_index = self.eval(var_operands.get(1)?)?;
+                let value = self.eval(var_operands.get(2)?)?;
+                self.store_u16(Address::from_byte_address(array + 2 * word_index), value)
+            }
             // Instruction::Storeb(var_operands) =>
             // Instruction::PutProp(var_operands) =>
             // Instruction::Sread(var_operands) =>
@@ -132,7 +196,6 @@ impl<'a> ZMachine<'a> {
             // Instruction::InputStream(var_operands) =>
             _ => panic!("TODO implement instruction {:?}", instr)
         }
-        Ok(())
     }
 
     fn reset(&mut self) {
@@ -161,7 +224,7 @@ impl<'a> ZMachine<'a> {
         *self.mem.bytes_mut().get_u8_mut(Address::from_byte_address(0x001f)).unwrap() = b'A';
     }
 
-    fn call(&mut self, dest: Operand, args: &[Operand], store: Store) -> Result<(), RuntimeError> {
+    fn call(&mut self, routine: Operand, args: &[Operand], store: Store) -> Result<(), RuntimeError> {
         // 6.4
         // Routine calls occur in the following circumstances: when one of the call... opcodes is
         // executed; in Versions 4 and later, when timed keyboard input is being monitored; in
@@ -171,15 +234,15 @@ impl<'a> ZMachine<'a> {
         // 6.4.3
         // A routine call to packed address 0 is legal: it does nothing and returns false (0).
         // Otherwise it is illegal to call a packed address where no routine is present.
-        let dest = Address::from_packed_address(self.eval(dest)?, self.version());
-        if dest == Address::from_packed_address(0, self.version()) {
-            return self.return_(0);
+        let routine = Address::from_packed_address(self.eval(routine)?, self.version());
+        if routine == Address::from_packed_address(0, self.version()) {
+            return self.ret(0);
         }
         
         // 6.4.4
         // When a routine is called, its local variables are created with initial values taken from
         // the routine header (Versions 1 to 4) or with initial value 0 (Versions 5 and later). ...
-        let (mut frame, next_pc) = StackFrame::from_routine_header(&self.mem, dest, store, self.pc)?;
+        let (mut frame, next_pc) = StackFrame::from_routine_header(&self.mem, routine, store, self.pc)?;
 
         // ... Next, the arguments are written into the local variables (argument 1 into local 1
         // and so on).
@@ -199,14 +262,39 @@ impl<'a> ZMachine<'a> {
         Ok(())
     }
 
-    fn return_(&mut self, _value: u16) -> Result<(), RuntimeError> {
+    fn ret(&mut self, val: u16) -> Result<(), RuntimeError> {
+        if self.call_stack.len() == 1 {
+            return Err(RuntimeError::CallStackUnderflow);
+        }
+
+        self.pc = self.frame().return_addr;
+        let store = self.frame().store;
+        self.call_stack.pop();
+
         // 6.4.1
         // ... All routines return a value (though sometimes this value is thrown away afterward:
         // for example by opcodes in the form call_vn*).
         // 6.4.5
         // The return value of a routine can be any Z-machine number. Returning 'false' means
         // returning 0; returning 'true' means returning 1.
-        panic!("TODO implement return");
+        self.store(val, store)?;
+
+        Ok(())
+    }
+
+    fn cond_branch(&mut self, cond: bool, branch: Branch) -> Result<(), RuntimeError> {
+        if cond == branch.on_true {
+            match branch.target {
+                BranchTarget::ReturnFalse => self.ret(0),
+                BranchTarget::ReturnTrue => self.ret(1),
+                BranchTarget::ToAddress(addr) => {
+                    self.pc = addr;
+                    Ok(())
+                }
+            }
+        } else {
+            Ok(())
+        }
     }
 
     fn eval(&self, operand: Operand) -> Result<u16, RuntimeError> {
@@ -222,15 +310,23 @@ impl<'a> ZMachine<'a> {
         }
     }
 
-    fn store(&mut self, value: u16, store: Store) -> Result<(), RuntimeError> {
+    fn store(&mut self, val: u16, store: Store) -> Result<(), RuntimeError> {
         match store {
             // 6.3
             // Writing to the stack pointer (variable number $00) pushes a value onto the stack;
-            Variable::TopOfStack => self.frame_mut().push(value),
-            Variable::Local(local) => self.frame_mut().set_local(local, value),
-            Variable::Global(global) => self.mem.set_global(global, value)
+            Variable::TopOfStack => self.frame_mut().push(val),
+            Variable::Local(local) => self.frame_mut().set_local(local, val),
+            Variable::Global(global) => self.mem.set_global(global, val)
                 .ok_or(RuntimeError::InvalidGlobal(global)),
         }
+    }
+
+    fn store_u16(&mut self, addr: Address, val: u16) -> Result<(), RuntimeError> {
+        if !self.mem.can_write(addr) || !self.mem.can_write(addr + 1) {
+            return Err(RuntimeError::ReadOnlyMemory(addr));
+        }
+        self.mem.bytes_mut().set_u16(addr, val)
+            .ok_or(RuntimeError::AddressOutOfRange(addr))
     }
 
     fn version(&self) -> Version {
@@ -269,12 +365,12 @@ impl StackFrame {
         }
     }
 
-    fn from_routine_header(mem: &Memory, addr: Address, store: Store, return_addr: Address) -> Result<(StackFrame, Address), RuntimeError> {
+    fn from_routine_header(mem: &Memory, routine: Address, store: Store, return_addr: Address) -> Result<(StackFrame, Address), RuntimeError> {
         // 5.1
         // A routine is required to begin at an address in memory which can be represented by a
         // packed address (for instance, in Version 5 it must occur at a byte address which is
         // divisible by 4).
-        let mut addr = addr;
+        let mut addr = routine;
 
         // 6.3.1
         // The stack is considered as empty at the start of each routine: it is illegal to pull

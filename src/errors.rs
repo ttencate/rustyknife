@@ -43,6 +43,18 @@ quick_error! {
         CallStackOverflow {
             display("call stack overflow")
         }
+        StackUnderflow {
+            display("stack underflow")
+        }
+        CallStackUnderflow {
+            display("call stack underflow")
+        }
+        ReadOnlyMemory(addr: Address) {
+            display("cannot write to read-only memory at {:}", addr)
+        }
+        AddressOutOfRange(addr: Address) {
+            display("address {:} out of range", addr)
+        }
     }
 }
 

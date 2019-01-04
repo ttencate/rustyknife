@@ -63,6 +63,19 @@ impl Memory {
         &mut self.bytes
     }
 
+    pub fn can_write(&self, addr: Address) -> bool {
+        if addr >= self.static_memory_base() {
+            return false;
+        }
+        if addr < Address::from_byte_address(0x0020) {
+            // Technically, only a few bits are writable here.
+            if addr != Address::from_byte_address(0x0010) {
+                return false;
+            }
+        }
+        true
+    }
+
     fn version_checked(&self) -> Result<Version, FormatError> {
         Version::try_from(self.bytes.get_u8(Address::from_byte_address(0x0000)).unwrap())
     }
@@ -105,7 +118,7 @@ impl Memory {
         self.bytes.set_u16(self.globals_table() + global.index() * 2, val)
     }
 
-    fn static_memory_base(&self) -> Address {
+    pub fn static_memory_base(&self) -> Address {
         // Base of static memory (byte address)
         Address::from_byte_address(self.bytes.get_u16(Address::from_byte_address(0x000e)).unwrap())
     }
