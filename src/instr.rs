@@ -1,127 +1,112 @@
-use crate::bytes::ByteAddress;
+use crate::bytes::Address;
 
-#[derive(Debug)]
-pub struct Instruction {
-    pub opcode: Opcode,
-    pub operands: Vec<Operand>,
-    pub store_var: Option<Variable>,
-    pub branch: Option<Branch>,
-    pub string: Option<String>,
-}
-
-// 14. Complete table of opcodes
-#[derive(Debug, Clone, Copy)]
-pub enum Opcode {
+// Instruction does not implement Copy because it potentially contains big strings (the Print and
+// PrintRet opcodes).
+#[derive(Debug, Clone)]
+pub enum Instruction {
+    // 14. Complete table of opcodes
     // Two-operand opcodes 2OP
-    Je,
-    Jl,
-    Jg,
-    DecChk,
-    IncChk,
-    Jin,
-    Test,
-    Or,
-    And,
-    TestAttr,
-    SetAttr,
-    ClearAttr,
-    Store,
-    InsertObj,
-    Loadw,
-    Loadb,
-    GetProp,
-    GetPropAddr,
-    GetNextProp,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Mod,
+    Je(Operand, Operand, Branch),
+    Jl(Operand, Operand, Branch),
+    Jg(Operand, Operand, Branch),
+    DecChk(Operand, Operand, Branch),
+    IncChk(Operand, Operand, Branch),
+    Jin(Operand, Operand, Branch),
+    Test(Operand, Operand, Branch),
+    Or(Operand, Operand, Store),
+    And(Operand, Operand, Store),
+    TestAttr(Operand, Operand, Branch),
+    SetAttr(Operand, Operand),
+    ClearAttr(Operand, Operand),
+    Store(Operand, Operand),
+    InsertObj(Operand, Operand),
+    Loadw(Operand, Operand, Store),
+    Loadb(Operand, Operand, Store),
+    GetProp(Operand, Operand, Store),
+    GetPropAddr(Operand, Operand, Store),
+    GetNextProp(Operand, Operand, Store),
+    Add(Operand, Operand, Store),
+    Sub(Operand, Operand, Store),
+    Mul(Operand, Operand, Store),
+    Div(Operand, Operand, Store),
+    Mod(Operand, Operand, Store),
     // One-operand opcodes 1OP
-    Jz,
-    GetSibling,
-    GetChild,
-    GetParent,
-    GetPropLen,
-    Inc,
-    Dec,
-    PrintAddr,
-    RemoveObj,
-    PrintObj,
-    Ret,
-    Jump,
-    PrintPaddr,
-    Load,
-    Not,
+    Jz(Operand, Branch),
+    GetSibling(Operand, Store, Branch),
+    GetChild(Operand, Store, Branch),
+    GetParent(Operand, Store),
+    GetPropLen(Operand, Store),
+    Inc(Operand),
+    Dec(Operand),
+    PrintAddr(Operand),
+    RemoveObj(Operand),
+    PrintObj(Operand),
+    Ret(Operand),
+    Jump(Operand),
+    PrintPaddr(Operand),
+    Load(Operand, Store),
+    Not(Operand, Store),
     // Zero-operand opcodes 0OP
-    Rtrue,
-    Rfalse,
-    Print,
-    PrintRet,
-    Nop,
-    Save,
-    Restore,
-    Restart,
-    RetPopped,
-    Pop,
-    Quit,
-    NewLine,
-    ShowStatus,
-    Verify,
+    Rtrue(),
+    Rfalse(),
+    Print(String),
+    PrintRet(String),
+    Nop(),
+    Save(Branch),
+    Restore(Branch),
+    Restart(),
+    RetPopped(),
+    Pop(),
+    Quit(),
+    NewLine(),
+    ShowStatus(),
+    Verify(Branch),
     // Variable-operand opcodes VAR
-    Call,
-    Storew,
-    Storeb,
-    PutProp,
-    Sread,
-    PrintChar,
-    PrintNum,
-    Random,
-    Push,
-    Pull,
-    SplitWindow,
-    SetWindow,
-    OutputStream,
-    InputStream,
+    Call(VarOperands, Store),
+    Storew(VarOperands),
+    Storeb(VarOperands),
+    PutProp(VarOperands),
+    Sread(VarOperands),
+    PrintChar(VarOperands),
+    PrintNum(VarOperands),
+    Random(VarOperands, Store),
+    Push(VarOperands),
+    Pull(VarOperands),
+    SplitWindow(VarOperands),
+    SetWindow(VarOperands),
+    OutputStream(VarOperands),
+    InputStream(VarOperands),
     // Extended opcodes EXT
     // None supported at the moment.
 }
 
-impl Opcode {
-    pub fn has_store(&self) -> bool {
-        match self {
-            Opcode::Or | Opcode::And | Opcode::Loadw | Opcode::Loadb | Opcode::GetProp |
-                Opcode::GetPropAddr | Opcode::GetNextProp | Opcode::Add | Opcode::Sub | Opcode::Mul
-                | Opcode::Div | Opcode::Mod | Opcode::GetSibling | Opcode::GetChild |
-                Opcode::GetParent | Opcode::GetPropLen | Opcode::Load | Opcode::Not | Opcode::Call
-                | Opcode::Random => true,
-            _ => false,
-        }
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct Local(u8);
+
+impl Local {
+    pub fn from_index(idx: usize) -> Local {
+        Local((idx + 1) as u8)
     }
 
-    pub fn has_branch(&self) -> bool {
-        match self {
-            Opcode::Je | Opcode::Jl | Opcode::Jg | Opcode::DecChk | Opcode::IncChk | Opcode::Jin |
-                Opcode::Test | Opcode::TestAttr | Opcode::Jz | Opcode::GetSibling |
-                Opcode::GetChild | Opcode::GetParent | Opcode::Save | Opcode::Restore |
-                Opcode::Verify => true,
-            _ => false,
-        }
-    }
-
-    pub fn has_string(&self) -> bool {
-        match self {
-            Opcode::Print | Opcode::PrintRet => true,
-            _ => false,
-        }
+    pub fn index(self) -> usize {
+        self.0 as usize - 1
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct Global(u8);
+
+impl Global {
+    pub fn index(self) -> usize {
+        self.0 as usize - 0x10
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Variable {
     TopOfStack,
-    Local(u8),
-    Global(u8),
+    Local(Local),
+    Global(Global),
 }
 
 impl Variable {
@@ -131,14 +116,16 @@ impl Variable {
             // Variable number $00 refers to the top of the stack, ...
             0 => Variable::TopOfStack,
             // ... $01 to $0f mean the local variables of the current routine ...
-            0x01..=0x0f => Variable::Local(byte),
+            0x01..=0x0f => Variable::Local(Local(byte)),
             // ... and $10 to $ff mean the global variables.
-            _ => Variable::Global(byte),
+            _ => Variable::Global(Global(byte)),
         }
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+pub type Store = Variable;
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Operand {
     // 4.2.1
     // Large constants, like all 2-byte words of data in the Z-machine, are stored with most
@@ -158,15 +145,15 @@ pub enum Operand {
 
 pub type VarOperands = Vec<Operand>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Branch {
     pub on_true: bool,
     pub target: BranchTarget,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BranchTarget {
     ReturnFalse,
     ReturnTrue,
-    ToAddress(ByteAddress),
+    ToAddress(Address),
 }

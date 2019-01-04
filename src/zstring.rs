@@ -10,8 +10,8 @@ impl<'a> ZString<'a> {
         self.0.len()
     }
 
-    pub fn decode(&self, abbrs_table: &AbbreviationsTable) -> Result<String, RuntimeError> {
-        Ok("".to_string())
+    pub fn decode(&self, _abbrs_table: &AbbreviationsTable) -> Result<String, RuntimeError> {
+        panic!("TODO zstring decoding is not yet implemented");
     }
 }
 

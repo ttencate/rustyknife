@@ -3,21 +3,37 @@ use std::ops::*;
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Bit(u8);
 
+#[allow(dead_code)]
 pub const BIT0: Bit = Bit(0);
+#[allow(dead_code)]
 pub const BIT1: Bit = Bit(1);
+#[allow(dead_code)]
 pub const BIT2: Bit = Bit(2);
+#[allow(dead_code)]
 pub const BIT3: Bit = Bit(3);
+#[allow(dead_code)]
 pub const BIT4: Bit = Bit(4);
+#[allow(dead_code)]
 pub const BIT5: Bit = Bit(5);
+#[allow(dead_code)]
 pub const BIT6: Bit = Bit(6);
+#[allow(dead_code)]
 pub const BIT7: Bit = Bit(7);
+#[allow(dead_code)]
 pub const BIT8: Bit = Bit(8);
+#[allow(dead_code)]
 pub const BIT9: Bit = Bit(9);
+#[allow(dead_code)]
 pub const BIT10: Bit = Bit(10);
+#[allow(dead_code)]
 pub const BIT11: Bit = Bit(11);
+#[allow(dead_code)]
 pub const BIT12: Bit = Bit(12);
+#[allow(dead_code)]
 pub const BIT13: Bit = Bit(13);
+#[allow(dead_code)]
 pub const BIT14: Bit = Bit(14);
+#[allow(dead_code)]
 pub const BIT15: Bit = Bit(15);
 
 impl Bit {

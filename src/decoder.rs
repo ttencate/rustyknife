@@ -1,18 +1,17 @@
 use crate::errors::{ErrorLocation, RuntimeError};
 use crate::bits::*;
-use crate::bytes::ByteAddress;
+use crate::bytes::Address;
 use crate::instr::*;
 use crate::mem::*;
-use crate::zstring::ZString;
 
 pub struct InstructionDecoder<'a> {
     mem: &'a Memory,
-    start_addr: ByteAddress,
-    next_addr: ByteAddress,
+    start_addr: Address,
+    next_addr: Address,
 }
 
 impl<'a> InstructionDecoder<'a> {
-    pub fn new(mem: &'a Memory, pc: ByteAddress) -> InstructionDecoder<'a> {
+    pub fn new(mem: &'a Memory, pc: Address) -> InstructionDecoder<'a> {
         InstructionDecoder {
             mem: mem,
             start_addr: pc,
@@ -20,7 +19,7 @@ impl<'a> InstructionDecoder<'a> {
         }
     }
 
-    pub fn decode(&mut self) -> Result<Instruction, RuntimeError> {
+    pub fn decode(&mut self) -> Result<(Instruction, ErrorLocation), RuntimeError> {
         // 4.1
         // A single Z-machine instruction consists of the following sections (and in the order
         // shown):
@@ -43,21 +42,105 @@ impl<'a> InstructionDecoder<'a> {
         let instruction_form = self.instruction_form(opcode_byte)?;
         let operand_count = self.operand_count(instruction_form, opcode_byte)?;
         let opcode_number = self.read_opcode_number(instruction_form, opcode_byte)?;
-        let opcode = self.find_opcode(operand_count, opcode_number)?;
         let operand_types = self.read_operand_types(instruction_form, opcode_byte, opcode_number)?;
-        let operands = self.read_operands(opcode, operand_count, &operand_types)?;
-        let store_var = self.read_store_var(opcode)?;
-        let branch = self.read_branch(opcode)?;
-        let zstring = self.read_zstring(opcode)?;
-        let string = if let Some(zstring) = zstring { Some(zstring.decode(&self.mem.abbrs_table())?) } else { None };
 
-        Ok(Instruction {
-            opcode: opcode,
-            operands: operands,
-            store_var: store_var,
-            branch: branch,
-            string: string,
-        })
+        let instr = match operand_count {
+            OperandCount::Two => {
+                let left = self.read_operand(operand_types[0])?;
+                let right = self.read_operand(operand_types[1])?;
+                match opcode_number {
+                    0x01 => Instruction::Je(left, right, self.read_branch()?),
+                    0x02 => Instruction::Jl(left, right, self.read_branch()?),
+                    0x03 => Instruction::Jg(left, right, self.read_branch()?),
+                    0x04 => Instruction::DecChk(left, right, self.read_branch()?),
+                    0x05 => Instruction::IncChk(left, right, self.read_branch()?),
+                    0x06 => Instruction::Jin(left, right, self.read_branch()?),
+                    0x07 => Instruction::Test(left, right, self.read_branch()?),
+                    0x08 => Instruction::Or(left, right, self.read_store_var()?),
+                    0x09 => Instruction::And(left, right, self.read_store_var()?),
+                    0x0a => Instruction::TestAttr(left, right, self.read_branch()?),
+                    0x0b => Instruction::SetAttr(left, right),
+                    0x0c => Instruction::ClearAttr(left, right),
+                    0x0d => Instruction::Store(left, right),
+                    0x0e => Instruction::InsertObj(left, right),
+                    0x0f => Instruction::Loadw(left, right, self.read_store_var()?),
+                    0x10 => Instruction::Loadb(left, right, self.read_store_var()?),
+                    0x11 => Instruction::GetProp(left, right, self.read_store_var()?),
+                    0x12 => Instruction::GetPropAddr(left, right, self.read_store_var()?),
+                    0x13 => Instruction::GetNextProp(left, right, self.read_store_var()?),
+                    0x14 => Instruction::Add(left, right, self.read_store_var()?),
+                    0x15 => Instruction::Sub(left, right, self.read_store_var()?),
+                    0x16 => Instruction::Mul(left, right, self.read_store_var()?),
+                    0x17 => Instruction::Div(left, right, self.read_store_var()?),
+                    0x18 => Instruction::Mod(left, right, self.read_store_var()?),
+                    _ => return Err(RuntimeError::UnknownOpcode(operand_count, opcode_number, self.loc()))
+                }
+            }
+            OperandCount::One => {
+                let operand = self.read_operand(operand_types[0])?;
+                match opcode_number {
+                    0x00 => Instruction::Jz(operand, self.read_branch()?),
+                    // For these two, we are relying on left-to-right evaluation order of
+                    // arguments. According to https://github.com/rust-lang/rust/issues/15300 this
+                    // should be safe; it's just not documented.
+                    0x01 => Instruction::GetSibling(operand, self.read_store_var()?, self.read_branch()?),
+                    0x02 => Instruction::GetChild(operand, self.read_store_var()?, self.read_branch()?),
+                    0x03 => Instruction::GetParent(operand, self.read_store_var()?),
+                    0x04 => Instruction::GetPropLen(operand, self.read_store_var()?),
+                    0x05 => Instruction::Inc(operand),
+                    0x06 => Instruction::Dec(operand),
+                    0x07 => Instruction::PrintAddr(operand),
+                    0x09 => Instruction::RemoveObj(operand),
+                    0x0a => Instruction::PrintObj(operand),
+                    0x0b => Instruction::Ret(operand),
+                    0x0c => Instruction::Jump(operand),
+                    0x0d => Instruction::PrintPaddr(operand),
+                    0x0e => Instruction::Load(operand, self.read_store_var()?),
+                    0x0f => Instruction::Not(operand, self.read_store_var()?),
+                    _ => return Err(RuntimeError::UnknownOpcode(operand_count, opcode_number, self.loc()))
+                }
+            }
+            OperandCount::Zero => {
+                match opcode_number {
+                    0x00 => Instruction::Rtrue(),
+                    0x01 => Instruction::Rfalse(),
+                    0x02 => Instruction::Print(self.read_string()?),
+                    0x03 => Instruction::PrintRet(self.read_string()?),
+                    0x04 => Instruction::Nop(),
+                    0x05 => Instruction::Save(self.read_branch()?),
+                    0x06 => Instruction::Restore(self.read_branch()?),
+                    0x07 => Instruction::Restart(),
+                    0x08 => Instruction::RetPopped(),
+                    0x09 => Instruction::Pop(),
+                    0x0a => Instruction::Quit(),
+                    0x0b => Instruction::NewLine(),
+                    0x0c => Instruction::ShowStatus(),
+                    0x0d => Instruction::Verify(self.read_branch()?),
+                    _ => return Err(RuntimeError::UnknownOpcode(operand_count, opcode_number, self.loc()))
+                }
+            }
+            OperandCount::Var => {
+                let var_operands = self.read_var_operands(operand_count, &operand_types)?;
+                match opcode_number {
+                    0x00 => Instruction::Call(var_operands, self.read_store_var()?),
+                    0x01 => Instruction::Storew(var_operands),
+                    0x02 => Instruction::Storeb(var_operands),
+                    0x03 => Instruction::PutProp(var_operands),
+                    0x04 => Instruction::Sread(var_operands),
+                    0x05 => Instruction::PrintChar(var_operands),
+                    0x06 => Instruction::PrintNum(var_operands),
+                    0x07 => Instruction::Random(var_operands, self.read_store_var()?),
+                    0x08 => Instruction::Push(var_operands),
+                    0x09 => Instruction::Pull(var_operands),
+                    0x0a => Instruction::SplitWindow(var_operands),
+                    0x0b => Instruction::SetWindow(var_operands),
+                    0x13 => Instruction::OutputStream(var_operands),
+                    0x14 => Instruction::InputStream(var_operands),
+                    _ => return Err(RuntimeError::UnknownOpcode(operand_count, opcode_number, self.loc()))
+                }
+            }
+        };
+        Ok((instr, self.loc()))
     }
 
     fn instruction_form(&self, opcode_byte: u8) -> Result<InstructionForm, RuntimeError> {
@@ -132,90 +215,6 @@ impl<'a> InstructionDecoder<'a> {
         }
     }
 
-    fn find_opcode(&self, operand_count: OperandCount, opcode_number: u8) -> Result<Opcode, RuntimeError> {
-        Ok(match operand_count {
-            OperandCount::Two => match opcode_number {
-                0x01 => Opcode::Je,
-                0x02 => Opcode::Jl,
-                0x03 => Opcode::Jg,
-                0x04 => Opcode::DecChk,
-                0x05 => Opcode::IncChk,
-                0x06 => Opcode::Jin,
-                0x07 => Opcode::Test,
-                0x08 => Opcode::Or,
-                0x09 => Opcode::And,
-                0x0a => Opcode::TestAttr,
-                0x0b => Opcode::SetAttr,
-                0x0c => Opcode::ClearAttr,
-                0x0d => Opcode::Store,
-                0x0e => Opcode::InsertObj,
-                0x0f => Opcode::Loadw,
-                0x10 => Opcode::Loadb,
-                0x11 => Opcode::GetProp,
-                0x12 => Opcode::GetPropAddr,
-                0x13 => Opcode::GetNextProp,
-                0x14 => Opcode::Add,
-                0x15 => Opcode::Sub,
-                0x16 => Opcode::Mul,
-                0x17 => Opcode::Div,
-                0x18 => Opcode::Mod,
-                _ => return Err(RuntimeError::UnknownOpcode(operand_count, opcode_number, self.loc()))
-            }
-            OperandCount::One => match opcode_number {
-                0x00 => Opcode::Jz,
-                0x01 => Opcode::GetSibling,
-                0x02 => Opcode::GetChild,
-                0x03 => Opcode::GetParent,
-                0x04 => Opcode::GetPropLen,
-                0x05 => Opcode::Inc,
-                0x06 => Opcode::Dec,
-                0x07 => Opcode::PrintAddr,
-                0x09 => Opcode::RemoveObj,
-                0x0a => Opcode::PrintObj,
-                0x0b => Opcode::Ret,
-                0x0c => Opcode::Jump,
-                0x0d => Opcode::PrintPaddr,
-                0x0e => Opcode::Load,
-                0x0f => Opcode::Not,
-                _ => return Err(RuntimeError::UnknownOpcode(operand_count, opcode_number, self.loc()))
-            }
-            OperandCount::Zero => match opcode_number {
-                0x00 => Opcode::Rtrue,
-                0x01 => Opcode::Rfalse,
-                0x02 => Opcode::Print,
-                0x03 => Opcode::PrintRet,
-                0x04 => Opcode::Nop,
-                0x05 => Opcode::Save,
-                0x06 => Opcode::Restore,
-                0x07 => Opcode::Restart,
-                0x08 => Opcode::RetPopped,
-                0x09 => Opcode::Pop,
-                0x0a => Opcode::Quit,
-                0x0b => Opcode::NewLine,
-                0x0c => Opcode::ShowStatus,
-                0x0d => Opcode::Verify,
-                _ => return Err(RuntimeError::UnknownOpcode(operand_count, opcode_number, self.loc()))
-            }
-            OperandCount::Var => match opcode_number {
-                0x00 => Opcode::Call,
-                0x01 => Opcode::Storew,
-                0x02 => Opcode::Storeb,
-                0x03 => Opcode::PutProp,
-                0x04 => Opcode::Sread,
-                0x05 => Opcode::PrintChar,
-                0x06 => Opcode::PrintNum,
-                0x07 => Opcode::Random,
-                0x08 => Opcode::Push,
-                0x09 => Opcode::Pull,
-                0x0a => Opcode::SplitWindow,
-                0x0b => Opcode::SetWindow,
-                0x13 => Opcode::OutputStream,
-                0x14 => Opcode::InputStream,
-                _ => return Err(RuntimeError::UnknownOpcode(operand_count, opcode_number, self.loc()))
-            }
-        })
-    }
-
     fn read_operand_types(&mut self, instruction_form: InstructionForm, opcode_byte: u8, opcode_number: u8) -> Result<Vec<OperandType>, RuntimeError> {
         // 4.4
         // Next, the types of the operands are specified.
@@ -248,7 +247,7 @@ impl<'a> InstructionDecoder<'a> {
                 let num_bytes = if opcode_number == 12 || opcode_number == 26 { 2 } else { 1 };
                 let mut types = Vec::with_capacity(4 * num_bytes);
                 let mut expect_omitted = false;
-                for i in 0..num_bytes {
+                for _ in 0..num_bytes {
                     let byte = self.next_u8()?;
                     for &start_bit in &[BIT6, BIT4, BIT2, BIT0] {
                         let operand_type = OperandType::from_bits(byte.bits(start_bit..=start_bit + 1));
@@ -270,106 +269,100 @@ impl<'a> InstructionDecoder<'a> {
         }
     }
 
-    fn read_operands(&mut self, opcode: Opcode, operand_count: OperandCount, operand_types: &Vec<OperandType>) -> Result<Vec<Operand>, RuntimeError> {
+    fn read_operand(&mut self, operand_type: OperandType) -> Result<Operand, RuntimeError> {
+        Ok(match operand_type {
+            OperandType::LargeConstant => Operand::LargeConstant(self.next_u16()?),
+            OperandType::SmallConstant => Operand::SmallConstant(self.next_u8()?),
+            OperandType::Variable => Operand::Variable(Variable::from_byte(self.next_u8()?)),
+            OperandType::Omitted => panic!("cannot read an omitted operand")
+        })
+    }
+
+    fn read_var_operands(&mut self, operand_count: OperandCount, operand_types: &Vec<OperandType>) -> Result<VarOperands, RuntimeError> {
         // 4.5
         // The operands are given next. Operand counts of 0OP, 1OP or 2OP require 0, 1 or 2
         // operands to be given, respectively. If the count is VAR, there must be as many operands
         // as there were types other than 'omitted'.
         let mut operands = Vec::with_capacity(operand_types.len());
-        for operand_type in operand_types {
-            match operand_type {
-                OperandType::LargeConstant => operands.push(Operand::LargeConstant(self.next_u16()?)),
-                OperandType::SmallConstant => operands.push(Operand::SmallConstant(self.next_u8()?)),
-                OperandType::Variable => operands.push(Operand::Variable(Variable::from_byte(self.next_u8()?))),
-                OperandType::Omitted => {}
+        for &operand_type in operand_types {
+            if operand_type != OperandType::Omitted {
+                operands.push(self.read_operand(operand_type)?);
             }
         }
         if let Some(expected_operand_count) = operand_count.count() {
             let actual_operand_count = operands.len();
             if actual_operand_count != expected_operand_count {
-                return Err(RuntimeError::InvalidOperandCount(opcode, expected_operand_count, actual_operand_count, self.loc()));
+                return Err(RuntimeError::InvalidOperandCount(expected_operand_count, actual_operand_count, self.loc()));
             }
         }
         Ok(operands)
     }
 
-    fn read_store_var(&mut self, opcode: Opcode) -> Result<Option<Variable>, RuntimeError> {
+    fn read_store_var(&mut self) -> Result<Variable, RuntimeError> {
         // 4.6
         // "Store" instructions return a value: e.g., mul multiplies its two operands together.
         // Such instructions must be followed by a single byte giving the variable number of where
         // to put the result.
-        if opcode.has_store() {
-            Ok(Some(Variable::from_byte(self.next_u8()?)))
-        } else {
-            Ok(None)
-        }
+        Ok(Variable::from_byte(self.next_u8()?))
     }
 
-    fn read_branch(&mut self, opcode: Opcode) -> Result<Option<Branch>, RuntimeError> {
+    fn read_branch(&mut self) -> Result<Branch, RuntimeError> {
         // 4.7
         // Instructions which test a condition are called "branch" instructions.
-        if opcode.has_branch() {
-            // The branch information is stored in one or two bytes, indicating what to do with the
-            // result of the test.
-            let first_byte = self.next_u8()?;
 
-            // If bit 7 of the first byte is 0, a branch occurs when the condition was false; if 1,
-            // then branch is on true.
-            let branch_on_true = first_byte.bit(BIT7);
+        // The branch information is stored in one or two bytes, indicating what to do with the
+        // result of the test.
+        let first_byte = self.next_u8()?;
 
-            let offset = if first_byte.bit(BIT6) {
-                // If bit 6 is set, then the branch occupies 1 byte only, and the "offset" is in
-                // the range 0 to 63, given in the bottom 6 bits.
-                first_byte.bits(BIT0..=BIT5) as i16
-            } else {
-                // If bit 6 is clear, then the offset is a signed 14-bit number given in bits 0 to
-                // 5 of the first byte followed by all 8 of the second.
-                let second_byte = self.next_u8()?;
-                let unsigned_offset = (((first_byte.bits(BIT0..=BIT5) as u16) << 8) | second_byte as u16) as i16;
-                if unsigned_offset & (1i16 << 13) == 0 {
-                    unsigned_offset
-                } else {
-                    unsigned_offset - (1i16 << 14)
-                }
-            };
+        // If bit 7 of the first byte is 0, a branch occurs when the condition was false; if 1,
+        // then branch is on true.
+        let branch_on_true = first_byte.bit(BIT7);
 
-            let target = match offset {
-                // 4.7.1
-                // An offset of 0 means "return false from the current routine", ...
-                0 => BranchTarget::ReturnFalse,
-                // ... and 1 means "return true from the current routine".
-                1 => BranchTarget::ReturnTrue,
-                // 4.7.2
-                // Otherwise, a branch moves execution to the instruction at address
-                // "Address after branch data + Offset - 2".
-                _ => BranchTarget::ToAddress(self.next_addr + (offset - 2))
-            };
-
-            Ok(Some(Branch {
-                on_true: branch_on_true,
-                target: target,
-            }))
+        let offset = if first_byte.bit(BIT6) {
+            // If bit 6 is set, then the branch occupies 1 byte only, and the "offset" is in
+            // the range 0 to 63, given in the bottom 6 bits.
+            first_byte.bits(BIT0..=BIT5) as i16
         } else {
-            Ok(None)
-        }
+            // If bit 6 is clear, then the offset is a signed 14-bit number given in bits 0 to
+            // 5 of the first byte followed by all 8 of the second.
+            let second_byte = self.next_u8()?;
+            let unsigned_offset = (((first_byte.bits(BIT0..=BIT5) as u16) << 8) | second_byte as u16) as i16;
+            if unsigned_offset & (1i16 << 13) == 0 {
+                unsigned_offset
+            } else {
+                unsigned_offset - (1i16 << 14)
+            }
+        };
+
+        let target = match offset {
+            // 4.7.1
+            // An offset of 0 means "return false from the current routine", ...
+            0 => BranchTarget::ReturnFalse,
+            // ... and 1 means "return true from the current routine".
+            1 => BranchTarget::ReturnTrue,
+            // 4.7.2
+            // Otherwise, a branch moves execution to the instruction at address
+            // "Address after branch data + Offset - 2".
+            _ => BranchTarget::ToAddress(self.next_addr + (offset as i32 - 2))
+        };
+
+        Ok(Branch {
+            on_true: branch_on_true,
+            target: target,
+        })
     }
 
-    fn read_zstring(&mut self, opcode: Opcode) -> Result<Option<ZString>, RuntimeError> {
-        if opcode.has_string() {
-            // 4.8
-            // Two opcodes, print and print_ret, are followed by a text string. This is stored
-            // according to the usual rules: in particular execution continues after the last
-            // 2-byte word of text (the one with top bit set).
-            Ok(Some(self.next_zstring()?))
-        } else {
-            Ok(None)
-        }
+    fn read_string(&mut self) -> Result<String, RuntimeError> {
+        // 4.8
+        // Two opcodes, print and print_ret, are followed by a text string. This is stored
+        // according to the usual rules: in particular execution continues after the last
+        // 2-byte word of text (the one with top bit set).
+        self.next_string()
     }
 
     fn next_u8(&mut self) -> Result<u8, RuntimeError> {
         let b = self.mem.bytes().get_u8(self.next_addr)
             .ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc()))?;
-        // TODO this might overflow even if we never read the next byte!
         self.next_addr += 1;
         Ok(b)
     }
@@ -377,17 +370,15 @@ impl<'a> InstructionDecoder<'a> {
     fn next_u16(&mut self) -> Result<u16, RuntimeError> {
         let w = self.mem.bytes().get_u16(self.next_addr)
             .ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc()))?;
-        // TODO this might overflow even if we never read the next byte!
         self.next_addr += 2;
         Ok(w)
     }
 
-    fn next_zstring(&mut self) -> Result<ZString, RuntimeError> {
-        let s = self.mem.bytes().get_zstring(self.next_addr)
+    fn next_string(&mut self) -> Result<String, RuntimeError> {
+        let zstring = self.mem.bytes().get_zstring(self.next_addr)
             .ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc()))?;
-        // TODO this might overflow even if we never read the next byte!
-        self.next_addr += s.len() as i16;
-        Ok(s)
+        self.next_addr += zstring.len();
+        Ok(zstring.decode(&self.mem.abbrs_table())?)
     }
 
     fn loc(&self) -> ErrorLocation {
@@ -397,13 +388,14 @@ impl<'a> InstructionDecoder<'a> {
         }
     }
 
-    pub fn next_addr(&self) -> ByteAddress {
+    pub fn next_addr(&self) -> Address {
         self.next_addr
     }
 }
 
 // 4.2
 // There are four 'types' of operand.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum OperandType {
     LargeConstant,
     SmallConstant,
@@ -450,6 +442,7 @@ impl OperandType {
 enum InstructionForm {
     Long,
     Short,
+    #[allow(dead_code)] // Only used in v5 and above, but partially implemented already.
     Extended,
     Variable,
 }
