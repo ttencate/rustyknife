@@ -1,201 +1,18 @@
 mod bits;
+mod bytes;
+mod errors;
 mod mem;
 #[cfg(test)]
 mod tests;
+mod zstring;
 
 use crate::bits::*;
+use crate::bytes::ByteAddress;
 use crate::mem::*;
+use crate::zstring::{ZString, AbbreviationsTable};
 use quick_error::quick_error;
 use std::fmt;
 use std::fmt::{Display, Formatter};
-
-pub struct StoryFile {
-    mem: Memory,
-}
-
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-enum Version {
-    V1 = 1,
-    V2 = 2,
-    V3 = 3,
-}
-
-use self::Version::*;
-
-impl Version {
-    // When TryFrom is graduated from nightly, we can implement that with the same signature.
-    fn try_from(byte: u8) -> Result<Version, FormatError> {
-        match byte {
-            1 => Ok(Version::V1),
-            2 => Ok(Version::V2),
-            3 => Ok(Version::V3),
-            _ => Err(FormatError::UnsupportedVersion(byte))
-        }
-    }
-}
-
-quick_error! {
-    #[derive(Debug)]
-    pub enum FormatError {
-        TooSmall(size: usize) {
-            display("story file is too small ({} bytes)", size)
-        }
-        TooBig(size: usize, max_size: usize) {
-            display("story file is too big ({} > {} bytes)", size, max_size)
-        }
-        MemoryOverlap(static_memory_base: ByteAddress, high_memory_base: ByteAddress) {
-            display("high memory may not overlap with dynamic memory: {:?} < {:?}", static_memory_base, high_memory_base)
-        }
-        UnsupportedVersion(version_byte: u8) {
-            display("story file has version {} which is unsupported", version_byte)
-        }
-    }
-}
-
-impl StoryFile {
-    pub fn from_bytes(bytes: Vec<u8>) -> Result<StoryFile, FormatError> {
-        // Dynamic memory must contain at least 64 bytes.
-        let size = bytes.len();
-        if size < 64 {
-            return Err(FormatError::TooSmall(size));
-        }
-
-        let s = StoryFile {
-            mem: Memory::from(bytes),
-        };
-
-        // Version number (1 to 6)
-        let version = s.version_checked()?;
-
-        // 1.1.4
-        // The maximum permitted length of a story file depends on the Version, as follows:
-        // V1-3    V4-5    V6-8
-        //  128     256     512
-        let max_size = match version {
-            V1 | V2 | V3 => 128 * 1024,
-        };
-        if size > max_size {
-            return Err(FormatError::TooBig(size, max_size));
-        }
-
-        // High memory begins at the "high memory mark" (the byte address stored in the word at $04
-        // in the header) and continues to the end of the story file. The bottom of high memory may
-        // overlap with the top of static memory (but not with dynamic memory).
-        let high_memory_base = s.high_memory_base();
-        let static_memory_base = s.static_memory_base();
-        if high_memory_base < static_memory_base {
-            return Err(FormatError::MemoryOverlap(static_memory_base, high_memory_base));
-        }
-
-        Ok(s)
-    }
-
-    fn version_checked(&self) -> Result<Version, FormatError> {
-        Version::try_from(self.mem.get_u8(ByteAddress(0x0000)).unwrap())
-    }
-
-    fn version(&self) -> Version {
-        self.version_checked().unwrap()
-    }
-
-    fn high_memory_base(&self) -> ByteAddress {
-        // Base of high memory (byte address)
-        self.mem.get_byte_address(ByteAddress(0x0004)).unwrap()
-    }
-
-    fn initial_program_counter(&self) -> ByteAddress {
-        // v1-5: Initial value of program counter (byte address)
-        match self.version() {
-            V1 | V2 | V3 => self.mem.get_byte_address(ByteAddress(0x0006)).unwrap(),
-        }
-    }
-
-    fn static_memory_base(&self) -> ByteAddress {
-        // Base of static memory (byte address)
-        self.mem.get_byte_address(ByteAddress(0x000e)).unwrap()
-    }
-
-    fn story_size(&self) -> usize {
-        // Length of file
-        let size = self.mem.get_u16(ByteAddress(0x001a)).unwrap() as usize;
-        // Some early Version 3 files do not contain length and checksum data, hence the notation 3+.
-        if size == 0 {
-            self.mem.len()
-        } else {
-            // 11.1.6
-            // The file length stored at $1a is actually divided by a constant, depending on the
-            // Version, to make it fit into a header word. This constant is 2 for Versions 1 to 3,
-            // 4 for Versions 4 to 5 or 8 for Versions 6 and later.
-            size * match self.version() {
-                V1 | V2 | V3 => 2
-            }
-        }
-    }
-
-    fn checksum(&self) -> Option<u16> {
-        // Checksum of file
-        let checksum = self.mem.get_u16(ByteAddress(0x001c)).unwrap();
-        // Some early Version 3 files do not contain length and checksum data, hence the notation 3+.
-        if checksum == 0 { None } else { Some(checksum) }
-    }
-}
-
-struct Flag(ByteAddress, Bit);
-
-impl Flag {
-    fn addr(&self) -> ByteAddress {
-        self.0
-    }
-
-    fn bit(&self) -> Bit {
-        self.1
-    }
-}
-
-// Flags 1 (in Versions 1 to 3):
-const FLAGS_1: ByteAddress = ByteAddress(0x0001);
-// 4: Status line not available?
-const STATUS_LINE_NOT_AVAILABLE: Flag = Flag(FLAGS_1, BIT4);
-// 5: Screen-splitting available?
-const SCREEN_SPLITTING_AVAILABLE: Flag = Flag(FLAGS_1, BIT5);
-// 6: Is a variable-pitch font the default?
-const VARIABLE_PITCH_FONT_DEFAULT: Flag = Flag(FLAGS_1, BIT6);
-
-// Flags 2:
-const FLAGS_2: ByteAddress = ByteAddress(0x0010);
-// 0: Set when transcripting is on
-const TRANSCRIPTING_ON: Flag = Flag(FLAGS_2, BIT0);
-// 1: Game sets to force printing in fixed-pitch font
-const FORCE_FIXED_PITCH_FONT: Flag = Flag(FLAGS_2, BIT1);
-
-#[derive(Debug)]
-pub struct InstructionLocation {
-    start_addr: ByteAddress,
-    bytes: Vec<u8>,
-}
-
-quick_error! {
-    #[derive(Debug)]
-    pub enum RuntimeError {
-        ProgramCounterOutOfRange(loc: InstructionLocation) {
-            display("program counter out of range at {:?}", loc)
-        }
-        InvalidInstruction(opcode: u8, loc: InstructionLocation) {
-            display("invalid instruction {:?} at {:?}", opcode, loc)
-        }
-        InvalidOperandCount(opcode: Opcode, expected: usize, actual: usize, loc: InstructionLocation) {
-            display("invalid operand count for opcode {:?}: expected {:?} but got {:?} at {:?}",
-                    opcode, expected, actual, loc)
-        }
-        InvalidOperandTypes(types: u8, loc: InstructionLocation) {
-            display("invalid operand types {:#b} at {:?}", types, loc)
-        }
-        UnknownOpcode(operand_count: OperandCount, opcode_number: u8, loc: InstructionLocation) {
-            display("unknown {:?} opcode {:?} at {:?}", operand_count, opcode_number, loc)
-        }
-    }
-}
 
 struct InstructionDecoder<'a> {
     version: Version,
@@ -266,7 +83,8 @@ impl<'a> InstructionDecoder<'a> {
                     // If the opcode is 190 ($BE in hexadecimal) and the version is 5 or later, the
                     // form is "extended". ...
                     match self.version {
-                        V1 | V2 | V3 => Err(RuntimeError::InvalidInstruction(opcode_byte, self.loc()))
+                        Version::V1 | Version::V2 | Version::V3 =>
+                            Err(RuntimeError::InvalidInstruction(opcode_byte, self.loc()))
                     }
                 } else {
                     // ... Otherwise, the form is "long".
@@ -560,7 +378,7 @@ impl<'a> InstructionDecoder<'a> {
     }
 
     fn next_u8(&mut self) -> Result<u8, RuntimeError> {
-        let b = self.z.get_u8(self.next_addr)
+        let b = self.z.mem.bytes().get_u8(self.next_addr)
             .ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc()))?;
         // TODO this might overflow even if we never read the next byte!
         self.next_addr += 1;
@@ -568,7 +386,7 @@ impl<'a> InstructionDecoder<'a> {
     }
 
     fn next_u16(&mut self) -> Result<u16, RuntimeError> {
-        let w = self.z.get_u16(self.next_addr)
+        let w = self.z.mem.bytes().get_u16(self.next_addr)
             .ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc()))?;
         // TODO this might overflow even if we never read the next byte!
         self.next_addr += 2;
@@ -576,17 +394,17 @@ impl<'a> InstructionDecoder<'a> {
     }
 
     fn next_zstring(&mut self) -> Result<ZString, RuntimeError> {
-        let s = self.z.get_zstring(self.next_addr)
+        let s = self.z.mem.bytes().get_zstring(self.next_addr)
             .ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc()))?;
         // TODO this might overflow even if we never read the next byte!
         self.next_addr += s.len() as i16;
         Ok(s)
     }
 
-    fn loc(&self) -> InstructionLocation {
-        InstructionLocation {
+    fn loc(&self) -> ErrorLocation {
+        ErrorLocation {
             start_addr: self.start_addr,
-            bytes: self.z.mem.get_slice(self.start_addr..self.next_addr).unwrap().to_vec(),
+            bytes: self.z.mem.bytes().get_slice(self.start_addr..self.next_addr).unwrap().to_vec(),
         }
     }
 
@@ -840,16 +658,16 @@ enum BranchTarget {
 }
 
 pub struct ZMachine<'a> {
-    s: &'a StoryFile,
+    story_file: &'a Memory,
     mem: Memory,
     pc: ByteAddress,
 }
 
 impl<'a> ZMachine<'a> {
-    pub fn new(s: &StoryFile) -> ZMachine {
+    pub fn new(story_file: &Memory) -> ZMachine {
         let mut z = ZMachine {
-            s: s,
-            mem: Memory::with_size(s.mem.len()),
+            story_file: story_file,
+            mem: Memory::with_size(story_file.bytes().len()),
             pc: ByteAddress(0),
         };
         z.restart();
@@ -857,8 +675,8 @@ impl<'a> ZMachine<'a> {
     }
 
     pub fn restart(&mut self) {
-        self.mem.copy_from(&self.s.mem);
-        self.pc = self.s.initial_program_counter();
+        self.mem.bytes_mut().copy_from(&self.story_file.bytes());
+        self.pc = self.mem.initial_program_counter();
         self.reset();
     }
 
@@ -870,12 +688,12 @@ impl<'a> ZMachine<'a> {
     }
 
     fn reset(&mut self) {
-        self.set_flag(STATUS_LINE_NOT_AVAILABLE, false);
-        self.set_flag(SCREEN_SPLITTING_AVAILABLE, true);
-        self.set_flag(VARIABLE_PITCH_FONT_DEFAULT, true);
-        self.set_flag(TRANSCRIPTING_ON, false);
-        if self.s.version() >= Version::V3 {
-            self.set_flag(FORCE_FIXED_PITCH_FONT, false);
+        self.mem.set_flag(STATUS_LINE_NOT_AVAILABLE, false);
+        self.mem.set_flag(SCREEN_SPLITTING_AVAILABLE, true);
+        self.mem.set_flag(VARIABLE_PITCH_FONT_DEFAULT, true);
+        self.mem.set_flag(TRANSCRIPTING_ON, false);
+        if self.mem.version() >= Version::V3 {
+            self.mem.set_flag(FORCE_FIXED_PITCH_FONT, false);
         }
 
         // Interpreter number
@@ -886,46 +704,13 @@ impl<'a> ZMachine<'a> {
         //    2   Apple IIe        6   IBM PC            10   Apple IIgs
         //    3   Macintosh        7   Commodore 128     11   Tandy Color
         //    4   Amiga            8   Commodore 64
-        *self.mem.get_u8_mut(ByteAddress(0x001e)).unwrap() = 6;
+        *self.mem.bytes_mut().get_u8_mut(ByteAddress(0x001e)).unwrap() = 6;
 
         // Interpreter version
         // 11.1.3.1
         // Interpreter versions are conventionally ASCII codes for upper-case letters in Versions 4
         // and 5 (note that Infocom's Version 6 interpreters just store numbers here).
-        *self.mem.get_u8_mut(ByteAddress(0x001f)).unwrap() = b'A';
-    }
-
-    fn flag(&self, flag: Flag) -> bool {
-        self.mem.get_u8(flag.addr()).unwrap().bit(flag.bit())
-    }
-
-    fn set_flag(&mut self, flag: Flag, value: bool) {
-        let byte = self.mem.get_u8_mut(flag.addr()).unwrap();
-        *byte = byte.set_bit(flag.bit(), value);
-    }
-
-    // TODO remove these, just expose mem()
-    fn get_u8(&self, addr: ByteAddress) -> Option<u8> {
-        self.mem.get_u8(addr)
-    }
-    fn get_u16(&self, addr: ByteAddress) -> Option<u16> {
-        self.mem.get_u16(addr)
-    }
-    fn get_zstring(&self, addr: ByteAddress) -> Option<ZString> {
-        // 3.2
-        // Text in memory consists of a sequence of 2-byte words. Each word is divided into three 5-bit 'Z-characters', plus 1 bit left over, arranged as
-        //
-        //    --first byte-------   --second byte---
-        //    7    6 5 4 3 2  1 0   7 6 5  4 3 2 1 0
-        //    bit  --first--  --second---  --third--
-        //
-        // The bit is set only on the last 2-byte word of the text, and so marks the end.
-        let mut end_addr = addr;
-        while !self.get_u16(end_addr)?.bit(BIT15) {
-            end_addr += 2;
-        }
-        end_addr += 2;
-        Some(ZString(self.mem.get_slice(addr..end_addr)?))
+        *self.mem.bytes_mut().get_u8_mut(ByteAddress(0x001f)).unwrap() = b'A';
     }
 
     fn decode_next_instr(&self) -> Result<(Instruction, ByteAddress), RuntimeError> {
@@ -935,7 +720,7 @@ impl<'a> ZMachine<'a> {
     }
 
     fn version(&self) -> Version {
-        self.s.version()
+        self.mem.version()
     }
 
     fn abbrs_table(&self) -> AbbreviationsTable {
@@ -949,17 +734,30 @@ impl<'a> Display for ZMachine<'a> {
     }
 }
 
-// TODO implement
-struct AbbreviationsTable();
-
-struct ZString<'a>(&'a[u8]);
-
-impl<'a> ZString<'a> {
-    fn len(&self) -> usize {
-        self.0.len()
+quick_error! {
+    #[derive(Debug)]
+    pub enum RuntimeError {
+        ProgramCounterOutOfRange(loc: ErrorLocation) {
+            display("program counter out of range at {:?}", loc)
+        }
+        InvalidInstruction(opcode: u8, loc: ErrorLocation) {
+            display("invalid instruction {:?} at {:?}", opcode, loc)
+        }
+        InvalidOperandCount(opcode: Opcode, expected: usize, actual: usize, loc: ErrorLocation) {
+            display("invalid operand count for opcode {:?}: expected {:?} but got {:?} at {:?}",
+                    opcode, expected, actual, loc)
+        }
+        InvalidOperandTypes(types: u8, loc: ErrorLocation) {
+            display("invalid operand types {:#b} at {:?}", types, loc)
+        }
+        UnknownOpcode(operand_count: OperandCount, opcode_number: u8, loc: ErrorLocation) {
+            display("unknown {:?} opcode {:?} at {:?}", operand_count, opcode_number, loc)
+        }
     }
+}
 
-    fn decode(&self, abbrs_table: &AbbreviationsTable) -> Result<String, RuntimeError> {
-        Ok("".to_string())
-    }
+#[derive(Debug)]
+pub struct ErrorLocation {
+    start_addr: ByteAddress,
+    bytes: Vec<u8>,
 }
