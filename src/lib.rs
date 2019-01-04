@@ -1,7 +1,7 @@
 use quick_error::quick_error;
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use std::ops::{Add, AddAssign, RangeInclusive};
+use std::ops::*;
 
 #[cfg(test)]
 mod tests;
@@ -69,6 +69,20 @@ impl Memory {
         // $0000 to $ffff (0 to 65535 decimal).
         let i = addr.to_index();
         Some((*self.0.get(i)? as u16) << 8 | (*self.0.get(i + 1)? as u16))
+    }
+
+    fn get_slice(&self, range: Range<ByteAddress>) -> Option<&[u8]> {
+        let s = range.start.to_index();
+        let e = range.end.to_index();
+        if s <= self.len() && e <= self.len() {
+            Some(&self.0[s..e])
+        } else {
+            None
+        }
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        &self.0
     }
 
     fn get_byte_address(&self, addr: ByteAddress) -> Option<ByteAddress> {
@@ -208,12 +222,6 @@ impl StoryFile {
     }
 }
 
-pub struct ZMachine<'a> {
-    s: &'a StoryFile,
-    dyn_mem: Memory,
-    pc: ByteAddress,
-}
-
 struct Flag(ByteAddress, Bit);
 
 impl Flag {
@@ -242,20 +250,48 @@ const TRANSCRIPTING_ON: Flag = Flag(FLAGS_2, Bit(0));
 // 1: Game sets to force printing in fixed-pitch font
 const FORCE_FIXED_PITCH_FONT: Flag = Flag(FLAGS_2, Bit(1));
 
-fn get_bit(byte: u8, bit: u8) -> bool {
-    assert!(bit < 8);
-    byte & (1 << bit) != 0
+trait GetBits {
+    // TODO use Bit struct as arguments
+    fn get_bit(self, bit: usize) -> bool;
+    fn get_bits(self, range: RangeInclusive<usize>) -> Self;
 }
 
-fn get_bits(byte: u8, range: RangeInclusive<u8>) -> u8 {
-    if range.start() > range.end() {
-        return 0;
+impl GetBits for u8 {
+    fn get_bit(self, bit: usize) -> bool {
+        let mask = 1 << bit;
+        assert!(mask != 0);
+        self & mask != 0
     }
-    let s = *range.start();
-    let e = *range.end() + 1;
-    assert!(s < 8);
-    assert!(e <= 8);
-    (byte >> s) & ((1u8 << (e - s)).wrapping_sub(1))
+
+    fn get_bits(self, range: RangeInclusive<usize>) -> u8 {
+        if range.start() > range.end() {
+            return 0;
+        }
+        let s = *range.start();
+        let e = *range.end() + 1;
+        assert!(s < 8);
+        assert!(e <= 8);
+        (self >> s) & ((1u8 << (e - s)).wrapping_sub(1))
+    }
+}
+
+impl GetBits for u16 {
+    fn get_bit(self, bit: usize) -> bool {
+        let mask = 1 << bit;
+        assert!(mask != 0);
+        self & mask != 0
+    }
+
+    fn get_bits(self, range: RangeInclusive<usize>) -> u16 {
+        if range.start() > range.end() {
+            return 0;
+        }
+        let s = *range.start();
+        let e = *range.end() + 1;
+        assert!(s < 8);
+        assert!(e <= 8);
+        (self >> s) & ((1u16 << (e - s)).wrapping_sub(1))
+    }
 }
 
 #[derive(Debug)]
@@ -331,17 +367,20 @@ impl<'a> InstructionDecoder<'a> {
         let operands = self.read_operands(opcode, operand_count, &operand_types)?;
         let store_var = self.read_store_var(opcode)?;
         let branch = self.read_branch(opcode)?;
+        let zstring = self.read_zstring(opcode)?;
+        let string = if let Some(zstring) = zstring { Some(zstring.decode(&self.z.abbrs_table())?) } else { None };
 
         Ok(Instruction {
             opcode: opcode,
             operands: operands,
             store_var: store_var,
             branch: branch,
+            string: string,
         })
     }
 
     fn instruction_form(&self, opcode_byte: u8) -> Result<InstructionForm, RuntimeError> {
-        match get_bits(opcode_byte, 6..=7) {
+        match opcode_byte.get_bits(6..=7) {
             // 4.3
             // ... If the top two bits of the opcode are $$11 the form is variable; ...
             0b11 => Ok(InstructionForm::Variable),
@@ -369,7 +408,7 @@ impl<'a> InstructionDecoder<'a> {
             // In short form, bits 4 and 5 of the opcode byte give an operand type as above. If
             // this is $11 then the operand count is 0OP; otherwise, 1OP.
             InstructionForm::Short => {
-                if get_bits(opcode_byte, 4..=5) == 0b11 {
+                if opcode_byte.get_bits(4..=5) == 0b11 {
                     Ok(OperandCount::Zero)
                 } else {
                     Ok(OperandCount::One)
@@ -382,7 +421,7 @@ impl<'a> InstructionDecoder<'a> {
             // In variable form, if bit 5 is 0 then the count is 2OP; if it is 1, then the count is
             // VAR.
             InstructionForm::Variable => {
-                if get_bits(opcode_byte, 5..=5) == 0 {
+                if opcode_byte.get_bits(5..=5) == 0 {
                     Ok(OperandCount::Two)
                 } else {
                     Ok(OperandCount::Var)
@@ -398,13 +437,13 @@ impl<'a> InstructionDecoder<'a> {
         match instruction_form {
             // 4.3.1
             // In short form, ... In either case the opcode number is given in the bottom 4 bits.
-            InstructionForm::Short => Ok(get_bits(opcode_byte, 0..=3)),
+            InstructionForm::Short => Ok(opcode_byte.get_bits(0..=3)),
             // 4.3.2
             // In long form ... The opcode number is given in the bottom 5 bits.
-            InstructionForm::Long => Ok(get_bits(opcode_byte, 0..=4)),
+            InstructionForm::Long => Ok(opcode_byte.get_bits(0..=4)),
             // 4.3.3
             // In variable form ... The opcode number is given in the bottom 5 bits.
-            InstructionForm::Variable => Ok(get_bits(opcode_byte, 0..=4)),
+            InstructionForm::Variable => Ok(opcode_byte.get_bits(0..=4)),
             // 4.3.4
             // In extended form, ... The opcode number is given in a second opcode byte.
             InstructionForm::Extended => Ok(self.next_u8()?),
@@ -502,7 +541,7 @@ impl<'a> InstructionDecoder<'a> {
             // 4.4.1
             // In short form, bits 4 and 5 of the opcode give the type.
             InstructionForm::Short => Ok(vec![
-                OperandType::from_bits(get_bits(opcode_byte, 4..=5)),
+                OperandType::from_bits(opcode_byte.get_bits(4..=5)),
             ]),
             // 4.4.2
             // In long form, bit 6 of the opcode gives the type of the first operand, bit 5 of the
@@ -510,8 +549,8 @@ impl<'a> InstructionDecoder<'a> {
             // instruction needs a large constant as operand, then it should be assembled in variable
             // rather than long form.)
             InstructionForm::Long => Ok(vec![
-                OperandType::from_bit(get_bits(opcode_byte, 6..=6)),
-                OperandType::from_bit(get_bits(opcode_byte, 5..=5)),
+                OperandType::from_bit(opcode_byte.get_bits(6..=6)),
+                OperandType::from_bit(opcode_byte.get_bits(5..=5)),
             ]),
             // 4.4.3
             // In variable or extended forms, a byte of 4 operand types is given next. This contains 4
@@ -530,7 +569,7 @@ impl<'a> InstructionDecoder<'a> {
                 for i in 0..num_bytes {
                     let byte = self.next_u8()?;
                     for &start_bit in &[6, 4, 2, 0] {
-                        let operand_type = OperandType::from_bits(get_bits(byte, start_bit..=start_bit + 1));
+                        let operand_type = OperandType::from_bits(byte.get_bits(start_bit..=start_bit + 1));
                         match operand_type {
                             OperandType::Omitted => {
                                 expect_omitted = true;
@@ -594,17 +633,17 @@ impl<'a> InstructionDecoder<'a> {
 
             // If bit 7 of the first byte is 0, a branch occurs when the condition was false; if 1,
             // then branch is on true.
-            let branch_on_true = get_bit(first_byte, 7);
+            let branch_on_true = first_byte.get_bit(7);
 
-            let offset = if get_bit(first_byte, 6) {
+            let offset = if first_byte.get_bit(6) {
                 // If bit 6 is set, then the branch occupies 1 byte only, and the "offset" is in
                 // the range 0 to 63, given in the bottom 6 bits.
-                get_bits(first_byte, 0..=5) as i16
+                first_byte.get_bits(0..=5) as i16
             } else {
                 // If bit 6 is clear, then the offset is a signed 14-bit number given in bits 0 to
                 // 5 of the first byte followed by all 8 of the second.
                 let second_byte = self.next_u8()?;
-                let unsigned_offset = (((get_bits(first_byte, 0..=5) as u16) << 8) | second_byte as u16) as i16;
+                let unsigned_offset = (((first_byte.get_bits(0..=5) as u16) << 8) | second_byte as u16) as i16;
                 if unsigned_offset & (1i16 << 13) == 0 {
                     unsigned_offset
                 } else {
@@ -633,6 +672,18 @@ impl<'a> InstructionDecoder<'a> {
         }
     }
 
+    fn read_zstring(&mut self, opcode: Opcode) -> Result<Option<ZString>, RuntimeError> {
+        if opcode.has_string() {
+            // 4.8
+            // Two opcodes, print and print_ret, are followed by a text string. This is stored
+            // according to the usual rules: in particular execution continues after the last
+            // 2-byte word of text (the one with top bit set).
+            Ok(Some(self.next_zstring()?))
+        } else {
+            Ok(None)
+        }
+    }
+
     fn next_u8(&mut self) -> Result<u8, RuntimeError> {
         let b = self.z.get_u8(self.next_addr)
             .ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc()))?;
@@ -647,6 +698,14 @@ impl<'a> InstructionDecoder<'a> {
         // TODO this might overflow even if we never read the next byte!
         self.next_addr += 2;
         Ok(w)
+    }
+
+    fn next_zstring(&mut self) -> Result<ZString, RuntimeError> {
+        let s = self.z.get_zstring(self.next_addr)
+            .ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc()))?;
+        // TODO this might overflow even if we never read the next byte!
+        self.next_addr += s.len() as i16;
+        Ok(s)
     }
 
     fn loc(&self) -> InstructionLocation {
@@ -668,6 +727,7 @@ struct Instruction {
     operands: Vec<Operand>,
     store_var: Option<Variable>,
     branch: Option<Branch>,
+    string: Option<String>,
 }
 
 // 14. Complete table of opcodes
@@ -766,6 +826,13 @@ impl Opcode {
                 Opcode::Test | Opcode::TestAttr | Opcode::Jz | Opcode::GetSibling |
                 Opcode::GetChild | Opcode::GetParent | Opcode::Save | Opcode::Restore |
                 Opcode::Verify => true,
+            _ => false,
+        }
+    }
+
+    fn has_string(&self) -> bool {
+        match self {
+            Opcode::Print | Opcode::PrintRet => true,
             _ => false,
         }
     }
@@ -898,11 +965,17 @@ enum BranchTarget {
     ToAddress(ByteAddress),
 }
 
+pub struct ZMachine<'a> {
+    s: &'a StoryFile,
+    mem: Memory,
+    pc: ByteAddress,
+}
+
 impl<'a> ZMachine<'a> {
     pub fn new(s: &StoryFile) -> ZMachine {
         let mut z = ZMachine {
             s: s,
-            dyn_mem: Memory(vec![0; s.static_memory_base().to_index()]),
+            mem: Memory(vec![0; s.mem.len()]),
             pc: ByteAddress(0),
         };
         z.restart();
@@ -910,8 +983,7 @@ impl<'a> ZMachine<'a> {
     }
 
     pub fn restart(&mut self) {
-        let dyn_mem_len = self.dyn_mem.len();
-        self.dyn_mem.0.copy_from_slice(&self.s.mem.0[0..dyn_mem_len]);
+        self.mem.0.copy_from_slice(&self.s.mem.as_slice());
         self.pc = self.s.initial_program_counter();
         self.reset();
     }
@@ -940,21 +1012,21 @@ impl<'a> ZMachine<'a> {
         //    2   Apple IIe        6   IBM PC            10   Apple IIgs
         //    3   Macintosh        7   Commodore 128     11   Tandy Color
         //    4   Amiga            8   Commodore 64
-        *self.dyn_mem.get_u8_mut(ByteAddress(0x001e)).unwrap() = 6;
+        *self.mem.get_u8_mut(ByteAddress(0x001e)).unwrap() = 6;
 
         // Interpreter version
         // 11.1.3.1
         // Interpreter versions are conventionally ASCII codes for upper-case letters in Versions 4
         // and 5 (note that Infocom's Version 6 interpreters just store numbers here).
-        *self.dyn_mem.get_u8_mut(ByteAddress(0x001f)).unwrap() = 'A' as u8;
+        *self.mem.get_u8_mut(ByteAddress(0x001f)).unwrap() = 'A' as u8;
     }
 
     fn flag(&self, flag: Flag) -> bool {
-        (self.dyn_mem.get_u8(flag.addr()).unwrap() & flag.bit().mask()) != 0
+        (self.mem.get_u8(flag.addr()).unwrap() & flag.bit().mask()) != 0
     }
 
     fn set_flag(&mut self, flag: Flag, value: bool) {
-        let byte = self.dyn_mem.get_u8_mut(flag.addr()).unwrap();
+        let byte = self.mem.get_u8_mut(flag.addr()).unwrap();
         if value {
             *byte |= flag.bit().mask();
         } else {
@@ -962,13 +1034,28 @@ impl<'a> ZMachine<'a> {
         }
     }
 
+    // TODO remove these, just expose mem()
     fn get_u8(&self, addr: ByteAddress) -> Option<u8> {
-        self.dyn_mem.get_u8(addr).or_else(|| self.s.mem.get_u8(addr))
+        self.mem.get_u8(addr)
     }
-
     fn get_u16(&self, addr: ByteAddress) -> Option<u16> {
-        // TODO breaks if it crosses the boundary between static and dynamic
-        self.dyn_mem.get_u16(addr).or_else(|| self.s.mem.get_u16(addr))
+        self.mem.get_u16(addr)
+    }
+    fn get_zstring(&self, addr: ByteAddress) -> Option<ZString> {
+        // 3.2
+        // Text in memory consists of a sequence of 2-byte words. Each word is divided into three 5-bit 'Z-characters', plus 1 bit left over, arranged as
+        //
+        //    --first byte-------   --second byte---
+        //    7    6 5 4 3 2  1 0   7 6 5  4 3 2 1 0
+        //    bit  --first--  --second---  --third--
+        //
+        // The bit is set only on the last 2-byte word of the text, and so marks the end.
+        let mut end_addr = addr;
+        while !self.get_u16(end_addr)?.get_bit(15) {
+            end_addr += 2;
+        }
+        end_addr += 2;
+        Some(ZString(self.mem.get_slice(addr..end_addr)?))
     }
 
     fn decode_next_instr(&self) -> Result<(Instruction, ByteAddress), RuntimeError> {
@@ -980,10 +1067,29 @@ impl<'a> ZMachine<'a> {
     fn version(&self) -> Version {
         self.s.version()
     }
+
+    fn abbrs_table(&self) -> AbbreviationsTable {
+        AbbreviationsTable()
+    }
 }
 
 impl<'a> Display for ZMachine<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "pc: {:}", self.pc)
+    }
+}
+
+// TODO implement
+struct AbbreviationsTable();
+
+struct ZString<'a>(&'a[u8]);
+
+impl<'a> ZString<'a> {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn decode(&self, abbrs_table: &AbbreviationsTable) -> Result<String, RuntimeError> {
+        Ok("".to_string())
     }
 }
