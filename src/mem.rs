@@ -1,5 +1,6 @@
 use crate::bits::*;
 use crate::bytes::{ByteAddress, Bytes};
+use crate::zstring::AbbreviationsTable;
 use quick_error::quick_error;
 
 pub struct Memory {
@@ -112,6 +113,10 @@ impl Memory {
         let checksum = self.bytes.get_u16(ByteAddress(0x001c)).unwrap();
         // Some early Version 3 files do not contain length and checksum data, hence the notation 3+.
         if checksum == 0 { None } else { Some(checksum) }
+    }
+
+    pub fn abbrs_table(&self) -> AbbreviationsTable {
+        AbbreviationsTable()
     }
 }
 

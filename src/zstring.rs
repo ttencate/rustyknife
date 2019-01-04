@@ -1,4 +1,4 @@
-use crate::RuntimeError;
+use crate::errors::RuntimeError;
 
 // TODO implement
 pub struct AbbreviationsTable();
