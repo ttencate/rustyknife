@@ -75,7 +75,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
             // Instruction::Jin(left, right, branch) =>
             // Instruction::Test(left, right, branch) =>
             // Instruction::Or(left, right, store) =>
-            // Instruction::And(left, right, store) =>
+            Instruction::And(left, right, store) => {
+                // and
+                // 2OP:9 9 and a b -> (result)
+                // Bitwise AND.
+                let a = self.eval(left)?;
+                let b = self.eval(right)?;
+                self.store(a & b, store)
+            }
             Instruction::TestAttr(left, right, branch) => {
                 // test_attr
                 // 2OP:10 A test_attr object attribute ?(label)
