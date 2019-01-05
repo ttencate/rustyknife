@@ -294,7 +294,17 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let value = self.eval(var_operands.get(0)?)?;
                 self.frame_mut().push(value)
             }
-            // Instruction::Pull(var_operands) =>
+            Instruction::Pull(var_operands) => {
+                // pull
+                // VAR:233 9 1 pull (variable)
+                // 6 pull stack -> (result)
+                // Pulls value off a stack. (If the stack underflows, the interpreter should halt
+                // with a suitable error message.) In Version 6, the stack in question may be
+                // specified as a user one: otherwise it is the game stack.
+                let variable = self.variable(self.eval(var_operands.get(0)?)?)?;
+                let value = self.frame_mut().pull()?;
+                self.store(variable, value)
+            }
             // Instruction::SplitWindow(var_operands) =>
             // Instruction::SetWindow(var_operands) =>
             // Instruction::OutputStream(var_operands) =>
@@ -547,6 +557,10 @@ impl StackFrame {
         }
         self.stack.push(value);
         Ok(())
+    }
+
+    fn pull(&mut self) -> Result<u16, RuntimeError> {
+        self.stack.pop().ok_or(RuntimeError::StackUnderflow)
     }
 
     fn num_locals(&self) -> usize {
