@@ -71,7 +71,16 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
             // Instruction::Jl(left, right, branch) =>
             // Instruction::Jg(left, right, branch) =>
             // Instruction::DecChk(left, right, branch) =>
-            // Instruction::IncChk(left, right, branch) =>
+            Instruction::IncChk(left, right, branch) => {
+                // inc_chk
+                // 2OP:5 5 inc_chk (variable) value ?(label)
+                // Increment variable, and branch if now greater than value.
+                let variable = self.variable(self.eval(left)?)?;
+                let value = self.eval(right)?;
+                let new_val = self.eval_var(variable)?.wrapping_add(1);
+                self.store(variable, new_val)?;
+                self.cond_branch(new_val > value, branch)
+            }
             // Instruction::Jin(left, right, branch) =>
             // Instruction::Test(left, right, branch) =>
             // Instruction::Or(left, right, store) =>
@@ -81,7 +90,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Bitwise AND.
                 let a = self.eval(left)?;
                 let b = self.eval(right)?;
-                self.store(a & b, store)
+                self.store(store, a & b)
             }
             Instruction::TestAttr(left, right, branch) => {
                 // test_attr
@@ -100,7 +109,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Set the VARiable referenced by the operand to value.
                 let variable = self.variable(self.eval(left)?)?;
                 let value = self.eval(right)?;
-                self.store(value, variable)
+                self.store(variable, value)
             }
             // Instruction::InsertObj(left, right) =>
             Instruction::Loadw(left, right, store) => {
@@ -112,7 +121,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let word_index = self.eval(right)?;
                 let addr = Address::from_byte_address(array + 2 * word_index);
                 let val = self.mem.bytes().get_u16(addr)?;
-                self.store(val, store)
+                self.store(store, val)
             }
             Instruction::Loadb(left, right, store) => {
                 // loadb
@@ -123,7 +132,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let byte_index = self.eval(right)?;
                 let addr = Address::from_byte_address(array + byte_index);
                 let val = self.mem.bytes().get_u8(addr)?;
-                self.store(val as u16, store)
+                self.store(store, val as u16)
             }
             // Instruction::GetProp(left, right, store) =>
             // Instruction::GetPropAddr(left, right, store) =>
@@ -132,13 +141,13 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // add
                 // 2OP:20 14 add a b -> (result)
                 // Signed 16-bit addition.
-                self.store(self.eval(left)?.wrapping_add(self.eval(right)?), store)
+                self.store(store, self.eval(left)?.wrapping_add(self.eval(right)?))
             }
             Instruction::Sub(left, right, store) => {
                 // sub
                 // 2OP:21 15 sub a b -> (result)
                 // Signed 16-bit subtraction.
-                self.store(self.eval(left)?.wrapping_sub(self.eval(right)?), store)
+                self.store(store, self.eval(left)?.wrapping_sub(self.eval(right)?))
             }
             // Instruction::Mul(left, right, store) =>
             // Instruction::Div(left, right, store) =>
@@ -340,7 +349,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         // 6.4.5
         // The return value of a routine can be any Z-machine number. Returning 'false' means
         // returning 0; returning 'true' means returning 1.
-        self.store(val, store)?;
+        self.store(store, val)?;
 
         Ok(())
     }
@@ -364,11 +373,15 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         match operand {
             Operand::LargeConstant(c) => Ok(c),
             Operand::SmallConstant(c) => Ok(c as u16),
-            Operand::Variable(var) => match var {
-                Variable::TopOfStack => self.frame().stack_top(),
-                Variable::Local(local) => self.frame().local(local),
-                Variable::Global(global) => self.mem.global(global),
-            }
+            Operand::Variable(var) => self.eval_var(var),
+        }
+    }
+
+    fn eval_var(&self, var: Variable) -> Result<u16, RuntimeError> {
+        match var {
+            Variable::TopOfStack => self.frame().stack_top(),
+            Variable::Local(local) => self.frame().local(local),
+            Variable::Global(global) => self.mem.global(global),
         }
     }
 
@@ -386,7 +399,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         }
     }
 
-    fn store(&mut self, val: u16, store: Store) -> Result<(), RuntimeError> {
+    fn store(&mut self, store: Store, val: u16) -> Result<(), RuntimeError> {
         match store {
             // 6.3
             // Writing to the stack pointer (variable number $00) pushes a value onto the stack;
