@@ -160,7 +160,19 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let val = self.mem.bytes().get_u8(addr)?;
                 self.store(store, val as u16)
             }
-            // Instruction::GetProp(left, right, store) =>
+            Instruction::GetProp(left, right, store) => {
+                // get_prop
+                // 2OP:17 11 get_prop object property -> (result)
+                // Read property from object (resulting in the default value if it had no such
+                // declared property). If the property has length 1, the value is only that byte.
+                // If it has length 2, the first two bytes of the property are taken as a word
+                // value. It is illegal for the opcode to be used if the property has length
+                // greater than 2, and the result is unspecified.
+                let object = Object::from_number(self.eval(left)?);
+                let property = Property::from_number(self.eval(right)? as u8);
+                let val = self.mem.obj_table().get_prop(object, property)?;
+                self.store(store, val)
+            }
             // Instruction::GetPropAddr(left, right, store) =>
             // Instruction::GetNextProp(left, right, store) =>
             Instruction::Add(left, right, store) => {
