@@ -180,7 +180,10 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
             // Instruction::RetPopped() =>
             // Instruction::Pop() =>
             // Instruction::Quit() =>
-            // Instruction::NewLine() =>
+            Instruction::NewLine() => {
+                self.platform.print("\n");
+                Ok(())
+            }
             // Instruction::ShowStatus() =>
             // Instruction::Verify(branch) =>
             Instruction::Call(var_operands, store) => {
