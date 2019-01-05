@@ -7,6 +7,7 @@ mod errors;
 mod instr;
 mod mem;
 mod obj;
+mod platform;
 mod zmachine;
 mod zstring;
 
@@ -14,4 +15,5 @@ mod zstring;
 mod tests;
 
 pub use crate::mem::Memory;
+pub use crate::platform::Platform;
 pub use crate::zmachine::ZMachine;

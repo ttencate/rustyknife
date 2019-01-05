@@ -1,4 +1,4 @@
-use rustyknife::{Memory, ZMachine};
+use rustyknife::{Memory, ZMachine, Platform};
 use std::fs;
 use std::path::PathBuf;
 use structopt::StructOpt;
@@ -8,6 +8,15 @@ use structopt::StructOpt;
 struct Options {
     #[structopt(name = "FILE", parse(from_os_str))]
     story_file: PathBuf,
+}
+
+struct ConsolePlatform {
+}
+
+impl Platform for ConsolePlatform {
+    fn print(&mut self, string: &str) {
+        print!("{}", string);
+    }
 }
 
 fn main() {
@@ -20,7 +29,9 @@ fn main() {
 
     // print!("{:}", mem.obj_table().to_tree_string().unwrap());
 
-    let mut z = ZMachine::new(&mem);
+    let mut platform = ConsolePlatform {};
+
+    let mut z = ZMachine::new(&mut platform, &mem);
     loop {
         z.step().unwrap();
     }

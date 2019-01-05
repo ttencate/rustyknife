@@ -4,26 +4,29 @@ use crate::errors::RuntimeError;
 use crate::instr::*;
 use crate::mem::*;
 use crate::obj::*;
+use crate::platform::Platform;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
 const STACK_SIZE_LIMIT: usize = 0x10000;
 const CALL_STACK_SIZE_LIMIT: usize = 0x10000;
 
-pub struct ZMachine<'a> {
+pub struct ZMachine<'a, P> where P: Platform {
+    platform: &'a mut P,
     story_file: &'a Memory,
     mem: Memory,
     pc: Address,
     call_stack: Vec<StackFrame>,
 }
 
-impl<'a> ZMachine<'a> {
-    pub fn new(story_file: &Memory) -> ZMachine {
+impl<'a, P> ZMachine<'a, P> where P: Platform {
+    pub fn new(platform: &'a mut P, story_file: &'a Memory) -> ZMachine<'a, P> {
         // 5.5
         // In all other Versions, the word at $06 contains the byte address of the first
         // instruction to execute. The Z-machine starts in an environment with no local variables
         // from which, again, a return is illegal.
         let mut z = ZMachine {
+            platform: platform,
             story_file: story_file,
             mem: Memory::with_size(story_file.bytes().len()),
             pc: Address::from_byte_address(0),
@@ -165,7 +168,10 @@ impl<'a> ZMachine<'a> {
             // Instruction::Not(operand, store) =>
             // Instruction::Rtrue() =>
             // Instruction::Rfalse() =>
-            // Instruction::Print(String) =>
+            Instruction::Print(string) => {
+                self.platform.print(&string);
+                Ok(())
+            }
             // Instruction::PrintRet(String) =>
             // Instruction::Nop() =>
             // Instruction::Save(branch) =>
@@ -383,7 +389,7 @@ impl<'a> ZMachine<'a> {
     }
 }
 
-impl<'a> Display for ZMachine<'a> {
+impl<'a, P> Display for ZMachine<'a, P> where P: Platform {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "pc: {:}", self.pc)
     }
