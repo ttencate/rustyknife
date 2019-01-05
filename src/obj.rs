@@ -19,6 +19,8 @@ impl<'a> ObjectTable<'a> {
         ObjectTable { mem: mem }
     }
 
+    // TODO add validation function, call it once when constructing the Memory
+
     pub fn get_name(&self, obj: Object) -> Result<String, RuntimeError> {
         let header_addr = self.obj_props_header_addr(obj)?;
         let text_length = self.mem.bytes().get_u8(header_addr)?;
@@ -31,26 +33,45 @@ impl<'a> ObjectTable<'a> {
 
     pub fn get_parent(&self, obj: Object) -> Result<Object, RuntimeError> {
         obj.check_valid(self.mem.version())?;
-        let number = match self.mem.version() {
-            Version::V1 | Version::V2 | Version::V3 => self.mem.bytes().get_u8(self.obj_addr(obj) + 4)? as u16
-        };
-        Ok(Object::from_number(number))
+        Ok(Object::from_number(self.mem.bytes().get_u8(self.parent_addr(obj))? as u16))
     }
 
     pub fn get_sibling(&self, obj: Object) -> Result<Object, RuntimeError> {
         obj.check_valid(self.mem.version())?;
-        let number = match self.mem.version() {
-            Version::V1 | Version::V2 | Version::V3 => self.mem.bytes().get_u8(self.obj_addr(obj) + 5)? as u16
-        };
-        Ok(Object::from_number(number))
+        Ok(Object::from_number(self.mem.bytes().get_u8(self.sibling_addr(obj))? as u16))
     }
 
     pub fn get_child(&self, obj: Object) -> Result<Object, RuntimeError> {
         obj.check_valid(self.mem.version())?;
-        let number = match self.mem.version() {
-            Version::V1 | Version::V2 | Version::V3 => self.mem.bytes().get_u8(self.obj_addr(obj) + 6)? as u16
-        };
-        Ok(Object::from_number(number))
+        Ok(Object::from_number(self.mem.bytes().get_u8(self.child_addr(obj))? as u16))
+    }
+
+    pub fn insert_obj(&mut self, obj: Object, dest: Object) -> Result<(), RuntimeError> {
+        // Moves object O to become the first child of the destination object D. (Thus, after the
+        // operation the child of D is O, and the sibling of O is whatever was previously the child
+        // of D.) All children of O move with it. (Initially O can be at any point in the object
+        // tree; it may legally have parent zero.)
+        obj.check_valid(self.mem.version())?;
+        dest.check_valid(self.mem.version())?;
+        let prev_parent = self.get_parent(obj)?;
+        if !prev_parent.is_null() {
+            let mut prev_sibling = self.get_child(prev_parent)?;
+            while !prev_sibling.is_null() {
+                let next = self.get_sibling(prev_sibling)?;
+                if next == obj {
+                    self.set_sibling(prev_sibling, self.get_sibling(obj)?)?;
+                    break;
+                }
+                prev_sibling = next;
+            }
+            if self.get_child(prev_parent)? == obj {
+                self.set_child(prev_parent, self.get_sibling(obj)?)?;
+            }
+        }
+        self.set_parent(obj, dest)?;
+        self.set_sibling(obj, self.get_child(dest)?)?;
+        self.set_child(dest, obj)?;
+        Ok(())
     }
 
     pub fn get_attr(&self, obj: Object, attr: Attribute) -> Result<bool, RuntimeError> {
@@ -153,6 +174,24 @@ impl<'a> ObjectTable<'a> {
         Ok((self.obj_addr(obj) + offset, bit))
     }
 
+    fn parent_addr(&self, obj: Object) -> Address {
+        match self.mem.version() {
+            Version::V1 | Version::V2 | Version::V3 => self.obj_addr(obj) + 4
+        }
+    }
+
+    fn sibling_addr(&self, obj: Object) -> Address {
+        match self.mem.version() {
+            Version::V1 | Version::V2 | Version::V3 => self.obj_addr(obj) + 5
+        }
+    }
+
+    fn child_addr(&self, obj: Object) -> Address {
+        match self.mem.version() {
+            Version::V1 | Version::V2 | Version::V3 => self.obj_addr(obj) + 6
+        }
+    }
+
     fn obj_props_header_addr(&self, obj: Object) -> Result<Address, RuntimeError> {
         let offset = match self.mem.version() {
             Version::V1 | Version::V2 | Version::V3 => 7
@@ -193,6 +232,34 @@ impl<'a> ObjectTable<'a> {
     fn obj_size(&self) -> usize {
         match self.mem.version() {
             Version::V1 | Version::V2 | Version::V3 => 9
+        }
+    }
+
+    fn set_parent(&mut self, obj: Object, parent: Object) -> Result<(), RuntimeError> {
+        match self.mem.version() {
+            // TODO export V1 etc directly as well
+            Version::V1 | Version::V2 | Version::V3 => {
+                let addr = self.parent_addr(obj);
+                self.mem.bytes_mut().set_u8(addr, parent.0 as u8)
+            }
+        }
+    }
+
+    fn set_sibling(&mut self, obj: Object, sibling: Object) -> Result<(), RuntimeError> {
+        match self.mem.version() {
+            Version::V1 | Version::V2 | Version::V3 => {
+                let addr = self.sibling_addr(obj);
+                self.mem.bytes_mut().set_u8(addr, sibling.0 as u8)
+            }
+        }
+    }
+
+    fn set_child(&mut self, obj: Object, child: Object) -> Result<(), RuntimeError> {
+        match self.mem.version() {
+            Version::V1 | Version::V2 | Version::V3 => {
+                let addr = self.child_addr(obj);
+                self.mem.bytes_mut().set_u8(addr, child.0 as u8)
+            }
         }
     }
 

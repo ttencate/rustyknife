@@ -112,7 +112,17 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let value = self.eval(right)?;
                 self.store(variable, value)
             }
-            // Instruction::InsertObj(left, right) =>
+            Instruction::InsertObj(left, right) => {
+                // insert_obj
+                // 2OP:14 E insert_obj object destination
+                // Moves object O to become the first child of the destination object D. (Thus,
+                // after the operation the child of D is O, and the sibling of O is whatever was
+                // previously the child of D.) All children of O move with it. (Initially O can be
+                // at any point in the object tree; it may legally have parent zero.)
+                let object = Object::from_number(self.eval(left)?);
+                let destination = Object::from_number(self.eval(right)?);
+                self.mem.obj_table().insert_obj(object, destination)
+            }
             Instruction::Loadw(left, right, store) => {
                 // loadw
                 // 2OP:15 F loadw array word-index -> (result)
