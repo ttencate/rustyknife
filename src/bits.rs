@@ -37,6 +37,10 @@ pub const BIT14: Bit = Bit(14);
 pub const BIT15: Bit = Bit(15);
 
 impl Bit {
+    pub fn number(num: u8) -> Bit {
+        Bit(num)
+    }
+
     fn mask<T>(self) -> T
         where T: Shl<Output = T> + From<u8>
     {

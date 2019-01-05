@@ -162,7 +162,7 @@ impl VarOperands {
     }
 
     pub fn get_slice(&self, range: Range<usize>) -> Result<&[Operand], RuntimeError> {
-        if range.start < self.len() && range.end <= self.len() {
+        if range.start < self.len() && range.end <= self.len() || range.start == range.end {
             Ok(&self.0[range])
         } else {
             Err(RuntimeError::NotEnoughOperands(range.end - 1, self.len()))

@@ -29,6 +29,45 @@ impl<'a> ObjectTable<'a> {
         zstring.decode(self.mem.version(), &self.mem.abbrs_table())
     }
 
+    pub fn get_parent(&self, obj: Object) -> Result<Object, RuntimeError> {
+        obj.check_valid(self.mem.version())?;
+        let number = match self.mem.version() {
+            Version::V1 | Version::V2 | Version::V3 => self.mem.bytes().get_u8(self.obj_addr(obj) + 4)? as u16
+        };
+        Ok(Object::from_number(number))
+    }
+
+    pub fn get_sibling(&self, obj: Object) -> Result<Object, RuntimeError> {
+        obj.check_valid(self.mem.version())?;
+        let number = match self.mem.version() {
+            Version::V1 | Version::V2 | Version::V3 => self.mem.bytes().get_u8(self.obj_addr(obj) + 5)? as u16
+        };
+        Ok(Object::from_number(number))
+    }
+
+    pub fn get_child(&self, obj: Object) -> Result<Object, RuntimeError> {
+        obj.check_valid(self.mem.version())?;
+        let number = match self.mem.version() {
+            Version::V1 | Version::V2 | Version::V3 => self.mem.bytes().get_u8(self.obj_addr(obj) + 6)? as u16
+        };
+        Ok(Object::from_number(number))
+    }
+
+    pub fn get_attr(&self, obj: Object, attr: Attribute) -> Result<bool, RuntimeError> {
+        obj.check_valid(self.mem.version())?;
+        attr.check_valid(self.mem.version())?;
+        let (addr, bit) = self.attr_addr(obj, attr)?;
+        Ok(self.mem.bytes().get_u8(addr)?.bit(bit))
+    }
+
+    pub fn set_attr(&mut self, obj: Object, attr: Attribute, val: bool) -> Result<(), RuntimeError> {
+        obj.check_valid(self.mem.version())?;
+        attr.check_valid(self.mem.version())?;
+        let (addr, bit) = self.attr_addr(obj, attr)?;
+        let byte = self.mem.bytes().get_u8(addr)?.set_bit(bit, val);
+        self.mem.bytes_mut().set_u8(addr, byte)
+    }
+
     pub fn get_prop(&self, obj: Object, prop: Property) -> Result<u16, RuntimeError> {
         obj.check_valid(self.mem.version())?;
         prop.check_valid(self.mem.version())?;
@@ -60,30 +99,6 @@ impl<'a> ObjectTable<'a> {
         } else {
             Err(RuntimeError::PropertyNotFound(obj, prop))
         }
-    }
-
-    pub fn get_parent(&self, obj: Object) -> Result<Object, RuntimeError> {
-        obj.check_valid(self.mem.version())?;
-        let number = match self.mem.version() {
-            Version::V1 | Version::V2 | Version::V3 => self.mem.bytes().get_u8(self.obj_addr(obj) + 4)? as u16
-        };
-        Ok(Object::from_number(number))
-    }
-
-    pub fn get_sibling(&self, obj: Object) -> Result<Object, RuntimeError> {
-        obj.check_valid(self.mem.version())?;
-        let number = match self.mem.version() {
-            Version::V1 | Version::V2 | Version::V3 => self.mem.bytes().get_u8(self.obj_addr(obj) + 5)? as u16
-        };
-        Ok(Object::from_number(number))
-    }
-
-    pub fn get_child(&self, obj: Object) -> Result<Object, RuntimeError> {
-        obj.check_valid(self.mem.version())?;
-        let number = match self.mem.version() {
-            Version::V1 | Version::V2 | Version::V3 => self.mem.bytes().get_u8(self.obj_addr(obj) + 6)? as u16
-        };
-        Ok(Object::from_number(number))
     }
 
     pub fn guess_num_objects(&self) -> Result<usize, RuntimeError> {
@@ -127,6 +142,15 @@ impl<'a> ObjectTable<'a> {
 
     fn obj_addr(&self, obj: Object) -> Address {
         self.start_addr() + obj.index() * self.obj_size()
+    }
+
+    fn attr_addr(&self, obj: Object, attr: Attribute) -> Result<(Address, Bit), RuntimeError> {
+        // 12.3.1
+        // ... Attributes 0 to 31 are flags (at any given time, they are either on (1) or off (0))
+        // and are stored topmost bit first: e.g., attribute 0 is stored in bit 7 of the first
+        // byte, attribute 31 is stored in bit 0 of the fourth.
+        let (offset, bit) = attr.offset();
+        Ok((self.obj_addr(obj) + offset, bit))
     }
 
     fn obj_props_header_addr(&self, obj: Object) -> Result<Address, RuntimeError> {
@@ -338,6 +362,27 @@ pub struct Attribute(u8);
 impl Attribute {
     pub fn from_number(num: u8) -> Attribute {
         Attribute(num)
+    }
+
+    fn check_valid(self, version: Version) -> Result<(), RuntimeError> {
+        if match version {
+            // The maximum property number isn't explicitly written in the spec, but can be
+            // inferred from the way the property table is stored.
+            Version::V1 | Version::V2 | Version::V3 => self.0 <= 31
+        } {
+            Ok(())
+        } else {
+            Err(RuntimeError::InvalidAttribute(self))
+        }
+    }
+
+    fn offset(self) -> (usize, Bit) {
+        // 12.3.1
+        // ... Attributes 0 to 31 are flags (at any given time, they are either on (1) or off (0))
+        // and are stored topmost bit first: e.g., attribute 0 is stored in bit 7 of the first
+        // byte, attribute 31 is stored in bit 0 of the fourth.
+        let idx = self.0 as usize;
+        (idx / 8, Bit::number((7 - idx % 8) as u8))
     }
 }
 

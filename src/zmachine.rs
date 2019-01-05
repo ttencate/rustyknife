@@ -73,7 +73,15 @@ impl<'a> ZMachine<'a> {
             // Instruction::Test(left, right, branch) =>
             // Instruction::Or(left, right, store) =>
             // Instruction::And(left, right, store) =>
-            // Instruction::TestAttr(left, right, branch) =>
+            Instruction::TestAttr(left, right, branch) => {
+                // test_attr
+                // 2OP:10 A test_attr object attribute ?(label)
+                // Jump if object has attribute.
+                let object = Object::from_number(self.eval(left)?);
+                let attribute = Attribute::from_number(self.eval(right)? as u8);
+                let cond = self.mem.obj_table().get_attr(object, attribute)?;
+                self.cond_branch(cond, branch)
+            }
             // Instruction::SetAttr(left, right) =>
             // Instruction::ClearAttr(left, right) =>
             Instruction::Store(left, right) => {
