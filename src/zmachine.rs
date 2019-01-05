@@ -242,7 +242,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
             }
             // Instruction::Sread(var_operands) =>
             // Instruction::PrintChar(var_operands) =>
-            // Instruction::PrintNum(var_operands) =>
+            Instruction::PrintNum(var_operands) => {
+                // print_num
+                // VAR:230 6 print_num value
+                // Print (signed) number in decimal.
+                let value = self.eval(var_operands.get(0)?)?;
+                self.platform.print(&format!("{}", value as i16));
+                Ok(())
+            }
             // Instruction::Random(var_operands, store) =>
             // Instruction::Push(var_operands) =>
             // Instruction::Pull(var_operands) =>
