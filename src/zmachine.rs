@@ -193,7 +193,17 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
             // Instruction::Dec(operand) =>
             // Instruction::PrintAddr(operand) =>
             // Instruction::RemoveObj(operand) =>
-            // Instruction::PrintObj(operand) =>
+            Instruction::PrintObj(operand) => {
+                // print_obj
+                // 1OP:138 A print_obj object
+                // Print short name of object (the Z-encoded string in the object header, not a
+                // property). If the object number is invalid, the interpreter should halt with a
+                // suitable error message.
+                let object = Object::from_number(self.eval(operand)?);
+                let name = self.mem.obj_table().get_name(object)?;
+                self.platform.print(&name);
+                Ok(())
+            }
             Instruction::Ret(operand) => {
                 // ret
                 // 1OP:139 B ret value
