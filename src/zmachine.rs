@@ -82,7 +82,16 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 self.store(variable, new_val)?;
                 self.cond_branch(new_val > value, branch)
             }
-            // Instruction::Jin(left, right, branch) =>
+            Instruction::Jin(left, right, branch) => {
+                // 
+                // jin
+                // 2OP:6 6 jin obj1 obj2 ?(label)
+                // Jump if object a is a direct child of b, i.e., if parent of a is b.
+                let a = Object::from_number(self.eval(left)?);
+                let b = Object::from_number(self.eval(right)?);
+                let parent_of_a = self.mem.obj_table().get_parent(a)?;
+                self.cond_branch(parent_of_a == b, branch)
+            }
             // Instruction::Test(left, right, branch) =>
             // Instruction::Or(left, right, store) =>
             Instruction::And(left, right, store) => {
