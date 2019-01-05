@@ -18,10 +18,10 @@ fn main() {
     let mut mem = Memory::from_bytes(story_file)
         .expect(&format!("error in story file {:?}", &opts.story_file));
 
-    print!("{:}", mem.obj_table().to_tree_string().unwrap());
+    // print!("{:}", mem.obj_table().to_tree_string().unwrap());
 
-    // let mut z = ZMachine::new(&mem);
-    // loop {
-    //     z.step().unwrap();
-    // }
+    let mut z = ZMachine::new(&mem);
+    loop {
+        z.step().unwrap();
+    }
 }

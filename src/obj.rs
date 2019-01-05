@@ -157,31 +157,13 @@ impl<'a> ObjectTable<'a> {
     }
 
     fn prop_addr(&self, obj: Object, prop: Property) -> Result<Option<(Address, u8)>, RuntimeError> {
-        // In Versions 1 to 3, each property is stored as a block
-        //
-        //    size byte     the actual property data
-        //                 ---between 1 and 8 bytes--
-        //
-        // where the size byte is arranged as 32 times the number of data bytes minus one, plus the
-        // property number. A property list is terminated by a size byte of 0. (It is otherwise
-        // illegal for a size byte to be a multiple of 32.)
-        match self.mem.version() {
-            Version::V1 | Version::V2 | Version::V3 => {
-                let mut addr = self.obj_props_addr(obj)?;
-                loop {
-                    let size_byte = self.mem.bytes().get_u8(addr)?;
-                    if size_byte == 0 {
-                        break Ok(None);
-                    }
-                    let prop_num = size_byte.bits(BIT0..=BIT4);
-                    let size = size_byte.bits(BIT5..=BIT7) + 1;
-                    if Property::from_number(prop_num) == prop {
-                        break Ok(Some((addr + 1, size)))
-                    }
-                    addr += size;
-                }
+        for res in PropertyIterator::new(self, obj, self.mem.version())? {
+            let (p, addr, size) = res?;
+            if p == prop {
+                return Ok(Some((addr, size)));
             }
         }
+        Ok(None)
     }
 
     fn obj_size(&self) -> usize {
@@ -292,6 +274,58 @@ impl Property {
             Ok(())
         } else {
             Err(RuntimeError::InvalidProperty(self))
+        }
+    }
+}
+
+struct PropertyIterator<'a> {
+    obj_table: &'a ObjectTable<'a>,
+    version: Version,
+    next_addr: Address,
+}
+
+impl<'a> PropertyIterator<'a> {
+    fn new(obj_table: &'a ObjectTable<'a>, obj: Object, version: Version) -> Result<PropertyIterator<'a>, RuntimeError> {
+        Ok(PropertyIterator {
+            obj_table: obj_table,
+            version: version,
+            next_addr: obj_table.obj_props_addr(obj)?,
+        })
+    }
+}
+
+impl<'a> Iterator for PropertyIterator<'a> {
+
+    type Item = Result<(Property, Address, u8), RuntimeError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // In Versions 1 to 3, each property is stored as a block
+        //
+        //    size byte     the actual property data
+        //                 ---between 1 and 8 bytes--
+        //
+        // where the size byte is arranged as 32 times the number of data bytes minus one, plus the
+        // property number. A property list is terminated by a size byte of 0. (It is otherwise
+        // illegal for a size byte to be a multiple of 32.)
+        match self.version {
+            Version::V1 | Version::V2 | Version::V3 => {
+                match self.obj_table.mem.bytes().get_u8(self.next_addr) {
+                    Ok(size_byte) => {
+                        if size_byte == 0 {
+                            return None;
+                        }
+                        let prop_num = size_byte.bits(BIT0..=BIT4);
+                        let prop = Property::from_number(prop_num);
+                        let size = size_byte.bits(BIT5..=BIT7) + 1;
+                        let item = Ok((prop, self.next_addr + 1, size));
+                        self.next_addr += 1 + size;
+                        Some(item)
+                    }
+                    Err(err) => {
+                        Some(Err(err))
+                    }
+                }
+            }
         }
     }
 }
