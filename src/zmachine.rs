@@ -107,7 +107,17 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let val = self.mem.bytes().get_u16(addr)?;
                 self.store(val, store)
             }
-            // Instruction::Loadb(left, right, store) =>
+            Instruction::Loadb(left, right, store) => {
+                // loadb
+                // 2OP:16 10 loadb array byte-index -> (result)
+                // Stores array->byte-index (i.e., the byte at address array+byte-index, which must
+                // lie in static or dynamic memory).
+                let array = self.eval(left)?;
+                let byte_index = self.eval(right)?;
+                let addr = Address::from_byte_address(array + byte_index);
+                let val = self.mem.bytes().get_u8(addr)?;
+                self.store(val as u16, store)
+            }
             // Instruction::GetProp(left, right, store) =>
             // Instruction::GetPropAddr(left, right, store) =>
             // Instruction::GetNextProp(left, right, store) =>
