@@ -102,7 +102,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let cond = self.mem.obj_table().get_attr(object, attribute)?;
                 self.cond_branch(cond, branch)
             }
-            // Instruction::SetAttr(left, right) =>
+            Instruction::SetAttr(left, right) => {
+                // set_attr
+                // 2OP:11 B set_attr object attribute
+                // Make object have the attribute numbered attribute.
+                let object = Object::from_number(self.eval(left)?);
+                let attribute = Attribute::from_number(self.eval(right)? as u8);
+                self.mem.obj_table().set_attr(object, attribute, true)
+            }
             // Instruction::ClearAttr(left, right) =>
             Instruction::Store(left, right) => {
                 // store
