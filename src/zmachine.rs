@@ -193,7 +193,12 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
             // Instruction::PrintPaddr(operand) =>
             // Instruction::Load(operand, store) =>
             // Instruction::Not(operand, store) =>
-            // Instruction::Rtrue() =>
+            Instruction::Rtrue() => {
+                // rtrue
+                // 0OP:176 0 rtrue
+                // Return true (i.e., 1) from the current routine.
+                self.ret(1)
+            }
             // Instruction::Rfalse() =>
             Instruction::Print(string) => {
                 self.platform.print(&string);
