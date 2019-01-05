@@ -1,4 +1,5 @@
 use crate::bits::*;
+use crate::errors::RuntimeError;
 use crate::mem::Version;
 use crate::zstring::ZString;
 use std::fmt;
@@ -21,37 +22,37 @@ impl Bytes {
         self.0.copy_from_slice(&other.as_slice());
     }
 
-    pub fn get_u8(&self, addr: Address) -> Option<u8> {
-        Some(*self.0.get(addr.to_index())?)
+    pub fn get_u8(&self, addr: Address) -> Result<u8, RuntimeError> {
+        Ok(*self.0.get(addr.to_index()).ok_or(RuntimeError::AddressOutOfRange(addr))?)
     }
 
-    pub fn get_u8_mut(&mut self, addr: Address) -> Option<&mut u8> {
-        Some(self.0.get_mut(addr.to_index())?)
+    pub fn set_u8(&mut self, addr: Address, val: u8) -> Result<(), RuntimeError> {
+        *self.0.get_mut(addr.to_index()).ok_or(RuntimeError::AddressOutOfRange(addr))? = val;
+        Ok(())
     }
 
-    pub fn get_u16(&self, addr: Address) -> Option<u16> {
+    pub fn get_u16(&self, addr: Address) -> Result<u16, RuntimeError> {
         // 2.1
         // In the Z-machine, numbers are usually stored in 2 bytes (in the form
         // most-significant-byte first, then least-significant) and hold any value in the range
         // $0000 to $ffff (0 to 65535 decimal).
-        let i = addr.to_index();
-        Some((*self.0.get(i)? as u16) << 8 | (*self.0.get(i + 1)? as u16))
+        let msb = self.get_u8(addr)? as u16;
+        let lsb = self.get_u8(addr + 1)? as u16;
+        Ok((msb << 8) | lsb)
     }
 
-    pub fn set_u16(&mut self, addr: Address, val: u16) -> Option<()> {
-        let i = addr.to_index();
-        if i + 1 >= self.len() {
-            None
-        } else {
-            self.0[i] = (val >> 8) as u8;
-            self.0[i + 1] = (val & 0xff) as u8;
-            Some(())
-        }
+    pub fn set_u16(&mut self, addr: Address, val: u16) -> Result<(), RuntimeError> {
+        let msb = (val >> 8) as u8;
+        let lsb = (val & 0xff) as u8;
+        self.set_u8(addr, msb)?;
+        self.set_u8(addr + 1, lsb)?;
+        Ok(())
     }
 
-    pub fn get_zstring(&self, addr: Address) -> Option<ZString> {
+    pub fn get_zstring(&self, addr: Address) -> Result<ZString, RuntimeError> {
         // 3.2
-        // Text in memory consists of a sequence of 2-byte words. Each word is divided into three 5-bit 'Z-characters', plus 1 bit left over, arranged as
+        // Text in memory consists of a sequence of 2-byte words. Each word is divided into three
+        // 5-bit 'Z-characters', plus 1 bit left over, arranged as
         //
         //    --first byte-------   --second byte---
         //    7    6 5 4 3 2  1 0   7 6 5  4 3 2 1 0
@@ -63,16 +64,16 @@ impl Bytes {
             end_addr += 2;
         }
         end_addr += 2;
-        Some(ZString::from(self.get_slice(addr..end_addr)?))
+        Ok(ZString::from(self.get_slice(addr..end_addr)?))
     }
 
-    pub fn get_slice(&self, range: Range<Address>) -> Option<&[u8]> {
+    pub fn get_slice(&self, range: Range<Address>) -> Result<&[u8], RuntimeError> {
         let s = range.start.to_index();
         let e = range.end.to_index();
         if s <= self.len() && e <= self.len() {
-            Some(&self.0[s..e])
+            Ok(&self.0[s..e])
         } else {
-            None
+            Err(RuntimeError::AddressOutOfRange(range.end))
         }
     }
 
@@ -144,6 +145,26 @@ impl Add<usize> for Address {
 impl AddAssign<usize> for Address {
     fn add_assign(&mut self, offset: usize) {
         self.0 += offset
+    }
+}
+
+impl Sub<Address> for Address {
+    type Output = usize;
+    fn sub(self, other: Address) -> usize {
+        self.0 - other.0
+    }
+}
+
+impl Add<u8> for Address {
+    type Output = Address;
+    fn add(self, offset: u8) -> Address {
+        Address(self.0 + offset as usize)
+    }
+}
+
+impl AddAssign<u8> for Address {
+    fn add_assign(&mut self, offset: u8) {
+        self.0 += offset as usize
     }
 }
 

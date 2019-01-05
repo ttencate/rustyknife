@@ -3,6 +3,7 @@ use crate::decoder::InstructionDecoder;
 use crate::errors::RuntimeError;
 use crate::instr::*;
 use crate::mem::*;
+use crate::obj::*;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
@@ -85,7 +86,7 @@ impl<'a> ZMachine<'a> {
                 let array = self.eval(left)?;
                 let word_index = self.eval(right)?;
                 let addr = Address::from_byte_address(array + 2 * word_index);
-                let val = self.mem.bytes().get_u16(addr).ok_or(RuntimeError::AddressOutOfRange(addr))?;
+                let val = self.mem.bytes().get_u16(addr)?;
                 self.store(val, store)
             }
             // Instruction::Loadb(left, right, store) =>
@@ -183,7 +184,21 @@ impl<'a> ZMachine<'a> {
                 self.store_u16(Address::from_byte_address(array + 2 * word_index), value)
             }
             // Instruction::Storeb(var_operands) =>
-            // Instruction::PutProp(var_operands) =>
+            Instruction::PutProp(var_operands) => {
+                // put_prop
+                // VAR:227 3 put_prop object property value
+                // Writes the given value to the given property of the given object. If the
+                // property does not exist for that object, the interpreter should halt with a
+                // suitable error message. If the property length is 1, then the interpreter should
+                // store only the least significant byte of the value. (For instance, storing -1
+                // into a 1-byte property results in the property value 255.) As with get_prop the
+                // property length must not be more than 2: if it is, the behaviour of the opcode
+                // is undefined.
+                let obj = self.eval(var_operands.get(0)?)?;
+                let prop = self.eval(var_operands.get(1)?)?;
+                let val = self.eval(var_operands.get(2)?)?;
+                self.mem.obj_table().set_prop(Object::from_number(obj), Property::from_number(prop as u8), val)
+            }
             // Instruction::Sread(var_operands) =>
             // Instruction::PrintChar(var_operands) =>
             // Instruction::PrintNum(var_operands) =>
@@ -215,13 +230,13 @@ impl<'a> ZMachine<'a> {
         //    2   Apple IIe        6   IBM PC            10   Apple IIgs
         //    3   Macintosh        7   Commodore 128     11   Tandy Color
         //    4   Amiga            8   Commodore 64
-        *self.mem.bytes_mut().get_u8_mut(Address::from_byte_address(0x001e)).unwrap() = 6;
+        self.mem.bytes_mut().set_u8(Address::from_byte_address(0x001e), 6).unwrap();
 
         // Interpreter version
         // 11.1.3.1
         // Interpreter versions are conventionally ASCII codes for upper-case letters in Versions 4
         // and 5 (note that Infocom's Version 6 interpreters just store numbers here).
-        *self.mem.bytes_mut().get_u8_mut(Address::from_byte_address(0x001f)).unwrap() = b'A';
+        self.mem.bytes_mut().set_u8(Address::from_byte_address(0x001f), b'A').unwrap();
     }
 
     fn call(&mut self, routine: Operand, args: &[Operand], store: Store) -> Result<(), RuntimeError> {
@@ -283,8 +298,8 @@ impl<'a> ZMachine<'a> {
     }
 
     fn cond_branch(&mut self, cond: bool, branch: Branch) -> Result<(), RuntimeError> {
-        if cond == branch.on_true {
-            match branch.target {
+        if branch.matches_cond(cond) {
+            match branch.target() {
                 BranchTarget::ReturnFalse => self.ret(0),
                 BranchTarget::ReturnTrue => self.ret(1),
                 BranchTarget::ToAddress(addr) => {
@@ -304,8 +319,7 @@ impl<'a> ZMachine<'a> {
             Operand::Variable(var) => match var {
                 Variable::TopOfStack => self.frame().stack_top(),
                 Variable::Local(local) => self.frame().local(local),
-                Variable::Global(global) => self.mem.global(global)
-                    .ok_or(RuntimeError::InvalidGlobal(global)),
+                Variable::Global(global) => self.mem.global(global),
             }
         }
     }
@@ -316,8 +330,7 @@ impl<'a> ZMachine<'a> {
             // Writing to the stack pointer (variable number $00) pushes a value onto the stack;
             Variable::TopOfStack => self.frame_mut().push(val),
             Variable::Local(local) => self.frame_mut().set_local(local, val),
-            Variable::Global(global) => self.mem.set_global(global, val)
-                .ok_or(RuntimeError::InvalidGlobal(global)),
+            Variable::Global(global) => self.mem.set_global(global, val),
         }
     }
 
@@ -326,7 +339,6 @@ impl<'a> ZMachine<'a> {
             return Err(RuntimeError::ReadOnlyMemory(addr));
         }
         self.mem.bytes_mut().set_u16(addr, val)
-            .ok_or(RuntimeError::AddressOutOfRange(addr))
     }
 
     fn version(&self) -> Version {
@@ -381,7 +393,7 @@ impl StackFrame {
         // A routine begins with one byte indicating the number of local variables it has (between
         // 0 and 15 inclusive).
         let num_locals = mem.bytes().get_u8(addr)
-            .ok_or(RuntimeError::InvalidRoutineHeader(addr))?
+            .or(Err(RuntimeError::InvalidRoutineHeader(addr)))?
             as usize;
         if num_locals > 15 {
             return Err(RuntimeError::InvalidRoutineHeader(addr));
@@ -396,7 +408,7 @@ impl StackFrame {
             Version::V1 | Version::V2 | Version::V3 => {
                 for i in 0..num_locals as usize {
                     locals[i] = mem.bytes().get_u16(addr)
-                        .ok_or(RuntimeError::InvalidRoutineHeader(addr))?;
+                        .or(Err(RuntimeError::InvalidRoutineHeader(addr)))?;
                     addr += 2;
                 }
             }

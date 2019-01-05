@@ -1,6 +1,8 @@
 use crate::bits::*;
 use crate::bytes::{Address, Bytes};
+use crate::errors::RuntimeError;
 use crate::instr::Global;
+use crate::obj::ObjectTable;
 use crate::zstring::AbbreviationsTable;
 use quick_error::quick_error;
 
@@ -48,9 +50,8 @@ impl Memory {
         }
 
         let globals_table = s.globals_table();
-        if s.bytes().get_u16(globals_table).is_none() {
-            return Err(FormatError::GlobalsTableOutOfRange(globals_table));
-        }
+        s.bytes().get_u16(globals_table)
+            .or(Err(FormatError::GlobalsTableOutOfRange(globals_table)))?;
 
         Ok(s)
     }
@@ -88,9 +89,10 @@ impl Memory {
         self.bytes.get_u8(flag.addr()).unwrap().bit(flag.bit())
     }
 
-    pub fn set_flag(&mut self, flag: Flag, value: bool) {
-        let byte = self.bytes.get_u8_mut(flag.addr()).unwrap();
-        *byte = byte.set_bit(flag.bit(), value);
+    pub fn set_flag(&mut self, flag: Flag, val: bool) {
+        let addr = flag.addr();
+        let byte = self.bytes.get_u8(addr).unwrap();
+        self.bytes.set_u8(addr, byte.set_bit(flag.bit(), val)).unwrap();
     }
 
     fn high_memory_base(&self) -> Address {
@@ -110,12 +112,14 @@ impl Memory {
         Address::from_byte_address(self.bytes.get_u16(Address::from_byte_address(0x000c)).unwrap())
     }
 
-    pub fn global(&self, global: Global) -> Option<u16> {
+    pub fn global(&self, global: Global) -> Result<u16, RuntimeError> {
         self.bytes.get_u16(self.globals_table() + global.index() * 2)
+            .or(Err(RuntimeError::InvalidGlobal(global)))
     }
 
-    pub fn set_global(&mut self, global: Global, val: u16) -> Option<()> {
+    pub fn set_global(&mut self, global: Global, val: u16) -> Result<(), RuntimeError> {
         self.bytes.set_u16(self.globals_table() + global.index() * 2, val)
+            .or(Err(RuntimeError::InvalidGlobal(global)))
     }
 
     pub fn static_memory_base(&self) -> Address {
@@ -148,7 +152,11 @@ impl Memory {
     // }
 
     pub fn abbrs_table(&self) -> AbbreviationsTable {
-        AbbreviationsTable()
+        AbbreviationsTable::new(self)
+    }
+
+    pub fn obj_table(&mut self) -> ObjectTable {
+        ObjectTable::new(self)
     }
 }
 

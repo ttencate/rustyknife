@@ -177,12 +177,23 @@ impl From<Vec<Operand>> for VarOperands {
 }
 
 #[derive(Debug, Clone)]
-pub struct Branch {
-    pub on_true: bool,
-    pub target: BranchTarget,
+pub struct Branch(bool, BranchTarget);
+
+impl Branch {
+    pub fn new(cond: bool, target: BranchTarget) -> Branch {
+        Branch(cond, target)
+    }
+
+    pub fn matches_cond(&self, cond: bool) -> bool {
+        cond == self.0
+    }
+
+    pub fn target(&self) -> BranchTarget {
+        self.1
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum BranchTarget {
     ReturnFalse,
     ReturnTrue,

@@ -316,7 +316,7 @@ impl<'a> InstructionDecoder<'a> {
 
         // If bit 7 of the first byte is 0, a branch occurs when the condition was false; if 1,
         // then branch is on true.
-        let branch_on_true = first_byte.bit(BIT7);
+        let cond = first_byte.bit(BIT7);
 
         let offset = if first_byte.bit(BIT6) {
             // If bit 6 is set, then the branch occupies 1 byte only, and the "offset" is in
@@ -346,10 +346,7 @@ impl<'a> InstructionDecoder<'a> {
             _ => BranchTarget::ToAddress(self.next_addr + (offset as i32 - 2))
         };
 
-        Ok(Branch {
-            on_true: branch_on_true,
-            target: target,
-        })
+        Ok(Branch::new(cond, target))
     }
 
     fn read_string(&mut self) -> Result<String, RuntimeError> {
@@ -362,23 +359,23 @@ impl<'a> InstructionDecoder<'a> {
 
     fn next_u8(&mut self) -> Result<u8, RuntimeError> {
         let b = self.mem.bytes().get_u8(self.next_addr)
-            .ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc()))?;
+            .or(Err(RuntimeError::ProgramCounterOutOfRange(self.loc())))?;
         self.next_addr += 1;
         Ok(b)
     }
 
     fn next_u16(&mut self) -> Result<u16, RuntimeError> {
         let w = self.mem.bytes().get_u16(self.next_addr)
-            .ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc()))?;
+            .or(Err(RuntimeError::ProgramCounterOutOfRange(self.loc())))?;
         self.next_addr += 2;
         Ok(w)
     }
 
     fn next_string(&mut self) -> Result<String, RuntimeError> {
         let zstring = self.mem.bytes().get_zstring(self.next_addr)
-            .ok_or(RuntimeError::ProgramCounterOutOfRange(self.loc()))?;
+            .or(Err(RuntimeError::ProgramCounterOutOfRange(self.loc())))?;
         self.next_addr += zstring.len();
-        Ok(zstring.decode(&self.mem.abbrs_table())?)
+        zstring.decode(self.mem.version(), &self.mem.abbrs_table())
     }
 
     fn loc(&self) -> ErrorLocation {

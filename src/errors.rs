@@ -1,6 +1,7 @@
 use crate::bytes::Address;
 use crate::decoder::OperandCount;
 use crate::instr::{Global, Local};
+use crate::obj::{Attribute, Object, Property};
 use quick_error::quick_error;
 
 quick_error! {
@@ -23,7 +24,7 @@ quick_error! {
             display("unknown {:?} opcode {:?} at {:?}", operand_count, opcode_number, loc)
         }
         NotEnoughOperands(idx: usize, num_operands: usize) {
-            display("cannot get operand {:} of {:}", idx, num_operands)
+            display("cannot get operand {} of {}", idx, num_operands)
         }
         StackEmpty {
             display("attempt to read top of stack while the stack was empty")
@@ -35,7 +36,7 @@ quick_error! {
             display("global variable {:?} does not exist", global)
         }
         InvalidRoutineHeader(addr: Address) {
-            display("invalid routine header at {:}", addr)
+            display("invalid routine header at {}", addr)
         }
         StackOverflow {
             display("stack overflow")
@@ -50,10 +51,31 @@ quick_error! {
             display("call stack underflow")
         }
         ReadOnlyMemory(addr: Address) {
-            display("cannot write to read-only memory at {:}", addr)
+            display("cannot write to read-only memory at {}", addr)
         }
         AddressOutOfRange(addr: Address) {
-            display("address {:} out of range", addr)
+            display("address {} out of range", addr)
+        }
+        InvalidObject(obj: Object) {
+            display("no such object {:?}", obj)
+        }
+        InvalidProperty(prop: Property) {
+            display("invalid property number {:?}", prop)
+        }
+        InvalidAttribute(attr: Attribute) {
+            display("invalid attribute number {:?}", attr)
+        }
+        PropertyNotFound(obj: Object, prop: Property) {
+            display("property {:?} not found on object {:?}", prop, obj)
+        }
+        ObjectCorrupt(obj: Object) {
+            display("object {:?} is corrupt", obj)
+        }
+        InvalidPropertySize(prop_size: u8) {
+            display("expected property size 1 or 2, but was {}", prop_size)
+        }
+        AbbreviationInAbbreviationsTable(idx: usize) {
+            display("string {} in the abbreviations table contained an abbreviation", idx)
         }
     }
 }
