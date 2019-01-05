@@ -314,6 +314,10 @@ impl Object {
         Object(num)
     }
 
+    pub fn number(self) -> u16 {
+        self.0
+    }
+
     fn index(self) -> usize {
         self.0 as usize - 1
     }

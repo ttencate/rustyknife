@@ -83,7 +83,6 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 self.cond_branch(new_val > value, branch)
             }
             Instruction::Jin(left, right, branch) => {
-                // 
                 // jin
                 // 2OP:6 6 jin obj1 obj2 ?(label)
                 // Jump if object a is a direct child of b, i.e., if parent of a is b.
@@ -187,7 +186,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
             }
             // Instruction::GetSibling(operand, store, branch) =>
             // Instruction::GetChild(operand, store, branch) =>
-            // Instruction::GetParent(operand, store) =>
+            Instruction::GetParent(operand, store) => {
+                // get_parent
+                // 1OP:131 3 get_parent object -> (result)
+                // Get parent object (note that this has no "branch if exists" clause).
+                let object = Object::from_number(self.eval(operand)?);
+                let parent = self.mem.obj_table().get_parent(object)?;
+                self.store(store, parent.number())
+            }
             // Instruction::GetPropLen(operand, store) =>
             // Instruction::Inc(operand) =>
             // Instruction::Dec(operand) =>
