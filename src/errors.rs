@@ -80,6 +80,9 @@ quick_error! {
         AbbreviationInAbbreviationsTable(idx: usize) {
             display("string {} in the abbreviations table contained an abbreviation", idx)
         }
+        InvalidCharacterCode(char_code: u16) {
+            display("attempt to decode invalid ZSCII character code {}", char_code)
+        }
     }
 }
 

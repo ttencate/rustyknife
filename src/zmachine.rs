@@ -5,6 +5,7 @@ use crate::instr::*;
 use crate::mem::*;
 use crate::obj::*;
 use crate::platform::Platform;
+use crate::zstring;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
@@ -250,7 +251,18 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 self.mem.obj_table().set_prop(Object::from_number(obj), Property::from_number(prop as u8), val)
             }
             // Instruction::Sread(var_operands) =>
-            // Instruction::PrintChar(var_operands) =>
+            Instruction::PrintChar(var_operands) => {
+                // print_char
+                // VAR:229 5 print_char output-character-code
+                // Print a ZSCII character. The operand must be a character code defined in ZSCII
+                // for output (see S 3). In particular, it must certainly not be negative or larger
+                // than 1023.
+                let output_character_code = self.eval(var_operands.get(0)?)?;
+                let character = zstring::zscii(output_character_code as usize)
+                    .ok_or(RuntimeError::InvalidCharacterCode(output_character_code))?;
+                self.platform.print(&character.to_string());
+                Ok(())
+            }
             Instruction::PrintNum(var_operands) => {
                 // print_num
                 // VAR:230 6 print_num value
