@@ -35,6 +35,9 @@ quick_error! {
         InvalidGlobal(global: Global) {
             display("global variable {:?} does not exist", global)
         }
+        InvalidVariable(var: u16) {
+            display("invalid indirect variable reference {}", var)
+        }
         InvalidRoutineHeader(addr: Address) {
             display("invalid routine header at {}", addr)
         }

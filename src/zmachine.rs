@@ -76,7 +76,14 @@ impl<'a> ZMachine<'a> {
             // Instruction::TestAttr(left, right, branch) =>
             // Instruction::SetAttr(left, right) =>
             // Instruction::ClearAttr(left, right) =>
-            // Instruction::store(left, right) =>
+            Instruction::Store(left, right) => {
+                // store
+                // 2OP:13 D store (variable) value
+                // Set the VARiable referenced by the operand to value.
+                let variable = self.variable(self.eval(left)?)?;
+                let value = self.eval(right)?;
+                self.store(value, variable)
+            }
             // Instruction::InsertObj(left, right) =>
             Instruction::Loadw(left, right, store) => {
                 // loadw
@@ -321,6 +328,20 @@ impl<'a> ZMachine<'a> {
                 Variable::Local(local) => self.frame().local(local),
                 Variable::Global(global) => self.mem.global(global),
             }
+        }
+    }
+
+    fn variable(&self, val: u16) -> Result<Variable, RuntimeError> {
+        // 4.2.3
+        // ... Some instructions take as an operand a "variable by reference": for instance, inc
+        // has one operand, the reference number of a variable to increment. This operand usually
+        // has type 'Small constant' (and Inform automatically assembles a line like @inc turns by
+        // writing the operand turns as a small constant with value the reference number of the
+        // variable turns).
+        if val < 0x100 {
+            Ok(Variable::from_byte(val as u8))
+        } else {
+            Err(RuntimeError::InvalidVariable(val))
         }
     }
 

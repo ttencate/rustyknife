@@ -15,7 +15,7 @@ fn main() {
 
     let story_file = fs::read(&opts.story_file)
         .expect(&format!("could not read game file {:?}", &opts.story_file));
-    let mut mem = Memory::from_bytes(story_file)
+    let mem = Memory::from_bytes(story_file)
         .expect(&format!("error in story file {:?}", &opts.story_file));
 
     // print!("{:}", mem.obj_table().to_tree_string().unwrap());
