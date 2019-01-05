@@ -287,7 +287,13 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 Ok(())
             }
             // Instruction::Random(var_operands, store) =>
-            // Instruction::Push(var_operands) =>
+            Instruction::Push(var_operands) => {
+                // push
+                // VAR:232 8 push value
+                // Pushes value onto the game stack.
+                let value = self.eval(var_operands.get(0)?)?;
+                self.frame_mut().push(value)
+            }
             // Instruction::Pull(var_operands) =>
             // Instruction::SplitWindow(var_operands) =>
             // Instruction::SetWindow(var_operands) =>
