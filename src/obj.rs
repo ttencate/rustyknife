@@ -390,9 +390,7 @@ impl<'a> PropertyIterator<'a> {
 }
 
 impl<'a> Iterator for PropertyIterator<'a> {
-
     type Item = Result<(Property, Address, u8), RuntimeError>;
-
     fn next(&mut self) -> Option<Self::Item> {
         // In Versions 1 to 3, each property is stored as a block
         //

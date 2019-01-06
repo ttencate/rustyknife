@@ -50,7 +50,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         let (instr, _loc) = decoder.decode()?;
         self.pc = decoder.next_addr();
 
-        println!("{:}{:}{:?}", self.pc, "  ".repeat(self.call_stack.len()), instr);
+        self.platform.next_instr(self.pc, self.call_stack.len() - 1, &instr);
         // TODO in case of any error, annotate it with location somehow
         self.exec_instr(instr)
     }

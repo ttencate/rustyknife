@@ -183,6 +183,6 @@ impl AddAssign<i32> for Address {
 
 impl Display for Address {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{:}", self.0)
+        self.0.fmt(f)
     }
 }

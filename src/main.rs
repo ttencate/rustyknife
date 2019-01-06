@@ -1,4 +1,4 @@
-use rustyknife::{Memory, ZMachine, Platform};
+use rustyknife::*;
 use std::fs;
 use std::path::PathBuf;
 use structopt::StructOpt;
@@ -15,7 +15,12 @@ struct ConsolePlatform {
 
 impl Platform for ConsolePlatform {
     fn print(&mut self, string: &str) {
+        // TODO probably need to disable line buffering
         print!("{}", string);
+    }
+
+    fn next_instr(&mut self, pc: Address, call_stack_depth: usize, instr: &Instruction) {
+        eprintln!("{:6}  {:}{:?}", pc, "  ".repeat(call_stack_depth), instr);
     }
 }
 
