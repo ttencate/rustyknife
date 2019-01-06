@@ -1,10 +1,12 @@
-use crate::bytes::Address;
+use crate::bytes::{Address, Bytes};
 use crate::decoder::InstructionDecoder;
 use crate::errors::RuntimeError;
+use crate::header;
 use crate::instr::*;
-use crate::mem::*;
+use crate::mem::Memory;
 use crate::obj::*;
 use crate::platform::Platform;
+use crate::version::*;
 use crate::zstring;
 use std::fmt;
 use std::fmt::{Display, Formatter};
@@ -14,22 +16,22 @@ const CALL_STACK_SIZE_LIMIT: usize = 0x10000;
 
 pub struct ZMachine<'a, P> where P: Platform {
     platform: &'a mut P,
-    story_file: &'a Memory,
-    mem: Memory,
+    orig_bytes: Bytes,
+    mem: &'a mut Memory<'a>,
     pc: Address,
     call_stack: Vec<StackFrame>,
 }
 
 impl<'a, P> ZMachine<'a, P> where P: Platform {
-    pub fn new(platform: &'a mut P, story_file: &'a Memory) -> ZMachine<'a, P> {
+    pub fn new(platform: &'a mut P, mem: &'a mut Memory<'a>) -> ZMachine<'a, P> {
         // 5.5
         // In all other Versions, the word at $06 contains the byte address of the first
         // instruction to execute. The Z-machine starts in an environment with no local variables
         // from which, again, a return is illegal.
         let mut z = ZMachine {
             platform: platform,
-            story_file: story_file,
-            mem: Memory::with_size(story_file.bytes().len()),
+            orig_bytes: mem.bytes().clone(),
+            mem: mem,
             pc: Address::from_byte_address(0),
             call_stack: Vec::with_capacity(32),
         };
@@ -38,10 +40,10 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
     }
 
     pub fn restart(&mut self) {
-        self.mem.bytes_mut().copy_from(&self.story_file.bytes());
+        self.mem.bytes_mut().copy_from(&self.orig_bytes);
         self.call_stack.clear();
         self.call_stack.push(StackFrame::root());
-        self.pc = self.mem.initial_program_counter();
+        self.pc = self.mem.header().initial_program_counter();
         self.reset();
     }
 
@@ -116,7 +118,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Make object have the attribute numbered attribute.
                 let object = Object::from_number(self.eval(left)?);
                 let attribute = Attribute::from_number(self.eval(right)? as u8);
-                self.mem.obj_table().set_attr(object, attribute, true)
+                self.mem.obj_table_mut().set_attr(object, attribute, true)
             }
             // Instruction::ClearAttr(left, right) =>
             Instruction::Store(left, right) => {
@@ -136,7 +138,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // at any point in the object tree; it may legally have parent zero.)
                 let object = Object::from_number(self.eval(left)?);
                 let destination = Object::from_number(self.eval(right)?);
-                self.mem.obj_table().insert_obj(object, destination)
+                self.mem.obj_table_mut().insert_obj(object, destination)
             }
             Instruction::Loadw(left, right, store) => {
                 // loadw
@@ -307,7 +309,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let obj = self.eval(var_operands.get(0)?)?;
                 let prop = self.eval(var_operands.get(1)?)?;
                 let val = self.eval(var_operands.get(2)?)?;
-                self.mem.obj_table().set_prop(Object::from_number(obj), Property::from_number(prop as u8), val)
+                self.mem.obj_table_mut().set_prop(Object::from_number(obj), Property::from_number(prop as u8), val)
             }
             // Instruction::Sread(var_operands) =>
             Instruction::PrintChar(var_operands) => {
@@ -358,13 +360,15 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
     }
 
     fn reset(&mut self) {
-        self.mem.set_flag(STATUS_LINE_NOT_AVAILABLE, false);
-        self.mem.set_flag(SCREEN_SPLITTING_AVAILABLE, true);
-        self.mem.set_flag(VARIABLE_PITCH_FONT_DEFAULT, true);
-        self.mem.set_flag(TRANSCRIPTING_ON, false);
-        if self.mem.version() >= Version::V3 {
-            self.mem.set_flag(FORCE_FIXED_PITCH_FONT, false);
+        self.mem.header_mut().set_flag(header::STATUS_LINE_NOT_AVAILABLE, false);
+        self.mem.header_mut().set_flag(header::SCREEN_SPLITTING_AVAILABLE, true);
+        self.mem.header_mut().set_flag(header::VARIABLE_PITCH_FONT_DEFAULT, true);
+        self.mem.header_mut().set_flag(header::TRANSCRIPTING_ON, false);
+        if self.mem.version() >= V3 {
+            self.mem.header_mut().set_flag(header::FORCE_FIXED_PITCH_FONT, false);
         }
+
+        // TODO move these into a helper in the Header
 
         // Interpreter number
         // 11.1.3
@@ -468,7 +472,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         match var {
             Variable::TopOfStack => self.frame().stack_top(),
             Variable::Local(local) => self.frame().local(local),
-            Variable::Global(global) => self.mem.global(global),
+            Variable::Global(global) => self.mem.globals().get(global),
         }
     }
 
@@ -492,14 +496,12 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
             // Writing to the stack pointer (variable number $00) pushes a value onto the stack;
             Variable::TopOfStack => self.frame_mut().push(val),
             Variable::Local(local) => self.frame_mut().set_local(local, val),
-            Variable::Global(global) => self.mem.set_global(global, val),
+            Variable::Global(global) => self.mem.globals_mut().set(global, val),
         }
     }
 
     fn store_u16(&mut self, addr: Address, val: u16) -> Result<(), RuntimeError> {
-        if !self.mem.can_write(addr) || !self.mem.can_write(addr + 1) {
-            return Err(RuntimeError::ReadOnlyMemory(addr));
-        }
+        // TODO writability check
         self.mem.bytes_mut().set_u16(addr, val)
     }
 
@@ -567,7 +569,7 @@ impl StackFrame {
             // 5.2.1
             // In Versions 1 to 4, that number of 2-byte words follows, giving initial values for
             // these local variables.
-            Version::V1 | Version::V2 | Version::V3 => {
+            V1 | V2 | V3 => {
                 for i in 0..num_locals as usize {
                     locals[i] = mem.bytes().get_u16(addr)
                         .or(Err(RuntimeError::InvalidRoutineHeader(addr)))?;

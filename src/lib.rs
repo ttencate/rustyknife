@@ -4,10 +4,13 @@ mod bits;
 mod bytes;
 mod decoder;
 mod errors;
+mod header;
+mod globals;
 mod instr;
 mod mem;
 mod obj;
 mod platform;
+mod version;
 mod zmachine;
 mod zstring;
 

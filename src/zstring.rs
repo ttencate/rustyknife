@@ -1,7 +1,7 @@
 use crate::bits::*;
-use crate::bytes::Address;
-use crate::errors::RuntimeError;
-use crate::mem::*;
+use crate::bytes::{Address, Bytes};
+use crate::errors::{FormatError, RuntimeError};
+use crate::version::*;
 
 pub struct ZString<'a>(&'a[u8]);
 
@@ -20,17 +20,19 @@ impl<'a> ZString<'a> {
 }
 
 pub struct AbbreviationsTable<'a> {
-    mem: &'a Memory,
+    version: Version,
+    bytes: &'a Bytes,
     base_addr: Address,
 }
 
 impl<'a> AbbreviationsTable<'a> {
-    pub fn new(mem: &Memory) -> AbbreviationsTable {
-        let base_addr = Address::from_byte_address(mem.bytes().get_u16(Address::from_byte_address(0x0018)).unwrap());
-        AbbreviationsTable {
-            mem: mem,
+    pub fn new(version: Version, bytes: &'a Bytes, base_addr: Address) -> Result<AbbreviationsTable<'a>, FormatError> {
+        // TODO check that the address is in range
+        Ok(AbbreviationsTable {
+            version: version,
+            bytes: bytes,
             base_addr: base_addr,
-        }
+        })
     }
 
     pub fn get_zstring(&self, idx: usize) -> Result<ZString<'a>, RuntimeError> {
@@ -38,8 +40,12 @@ impl<'a> AbbreviationsTable<'a> {
         // If z is the first Z-character (1, 2 or 3) and x the subsequent one, then the interpreter
         // must look up entry 32(z-1)+x in the abbreviations table and print the string at that
         // word address.
-        let addr = Address::from_word_address(self.mem.bytes().get_u16(self.base_addr + 2 * idx)?);
-        self.mem.bytes().get_zstring(addr)
+        let addr = Address::from_word_address(self.bytes.get_u16(self.base_addr + 2 * idx)?);
+        self.bytes.get_zstring(addr)
+    }
+
+    fn version(&self) -> Version {
+        self.version
     }
 }
 
@@ -78,10 +84,10 @@ impl<'a> ZStringDecoder<'a> {
                 //              from A0  from A1  from A2
                 //   Z-char 2      A1       A2       A0
                 //   Z-char 3      A2       A0       A1
-                (Version::V1, 2, _) | (Version::V2, 2, _) => {
+                (V1, 2, _) | (V2, 2, _) => {
                     cur_alphabet = cur_alphabet.next();
                 }
-                (Version::V1, 3, _) | (Version::V2, 3, _) => {
+                (V1, 3, _) | (V2, 3, _) => {
                     cur_alphabet = cur_alphabet.prev();
                 }
 
@@ -90,10 +96,10 @@ impl<'a> ZStringDecoder<'a> {
                 // character only: Z-characters 4 and 5 are shift characters. Thus 4 means "the
                 // next character is in A1" and 5 means "the next is in A2". There are no shift
                 // lock characters.
-                (Version::V3, 4, _) => {
+                (V3, 4, _) => {
                     cur_alphabet = Alphabet::A1;
                 }
-                (Version::V3, 5, _) => {
+                (V3, 5, _) => {
                     cur_alphabet = Alphabet::A2;
                 }
 
@@ -105,7 +111,7 @@ impl<'a> ZStringDecoder<'a> {
                 // abbreviations table and print the string at that word address. In Version 2,
                 // Z-character 1 has this effect (but 2 and 3 do not, so there are only 32
                 // abbreviations).
-                (Version::V3, 1, _) | (Version::V3, 2, _) | (Version::V3, 3, _) | (Version::V2, 1, _)=> {
+                (V3, 1, _) | (V3, 2, _) | (V3, 3, _) | (V2, 1, _)=> {
                     if let Some(next_char) = iter.next() {
                         out.push_str(&self.abbreviation(32 * (zchar.0 as usize - 1) + next_char.0 as usize)?);
                     }
@@ -139,7 +145,7 @@ impl<'a> ZStringDecoder<'a> {
 
                 // 3.5.2
                 // In Version 1, Z-character 1 is printed as a new-line (ZSCII 13).
-                (Version::V1, 1, _) => {
+                (V1, 1, _) => {
                     out.push('\n');
                 }
 
@@ -152,7 +158,7 @@ impl<'a> ZStringDecoder<'a> {
                     // if it's not immediately followed by an alphabet table character. The
                     // simplest is to just let the shift remain in effect until an actual alphabet
                     // table character is encountered.
-                    if self.version >= Version::V3 {
+                    if self.version >= V3 {
                         cur_alphabet = Alphabet::A0;
                     }
                 }
@@ -325,7 +331,7 @@ impl Alphabet {
         match (version, self) {
             (_, Alphabet::A0) => A0[zchar as usize],
             (_, Alphabet::A1) => A1[zchar as usize],
-            (Version::V1, Alphabet::A2) => A2_V1[zchar as usize],
+            (V1, Alphabet::A2) => A2_V1[zchar as usize],
             (_, Alphabet::A2) => A2[zchar as usize],
         }
     }

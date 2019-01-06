@@ -1,8 +1,8 @@
 use crate::bits::*;
-use crate::bytes::Address;
-use crate::errors::RuntimeError;
-use crate::mem::{Memory, Version};
-use crate::zstring::ZString;
+use crate::bytes::{Address, Bytes};
+use crate::errors::{FormatError, RuntimeError};
+use crate::version::*;
+use crate::zstring::{AbbreviationsTable, ZString};
 use std::collections::BTreeSet;
 use std::fmt;
 use std::fmt::{Display, Formatter};
@@ -11,39 +11,46 @@ use std::fmt::{Display, Formatter};
 // The object table is held in dynamic memory and its byte address is stored in the word at $0a in
 // the header.
 pub struct ObjectTable<'a> {
-    mem: &'a mut Memory,
+    version: Version,
+    bytes: &'a mut Bytes,
+    base_addr: Address,
+    abbrs_table: &'a AbbreviationsTable<'a>,
 }
 
 impl<'a> ObjectTable<'a> {
-    pub fn new(mem: &mut Memory) -> ObjectTable {
-        ObjectTable { mem: mem }
+    pub fn new(version: Version, bytes: &'a mut Bytes, base_addr: Address, abbrs_table: &'a AbbreviationsTable<'a>) -> Result<ObjectTable<'a>, FormatError> {
+        // TODO check that the props default table and obj table are in addr range
+        Ok(ObjectTable {
+            version: version,
+            bytes: bytes,
+            base_addr: base_addr,
+            abbrs_table: abbrs_table,
+        })
     }
-
-    // TODO add validation function, call it once when constructing the Memory
 
     pub fn get_name(&self, obj: Object) -> Result<String, RuntimeError> {
         let header_addr = self.obj_props_header_addr(obj)?;
-        let text_length = self.mem.bytes().get_u8(header_addr)?;
+        let text_length = self.bytes.get_u8(header_addr)?;
         let text_addr = header_addr + 1;
         // This one is a bit special because 0-length zstrings are possible. So we construct it
         // from a slice directly, instead of scanning for a terminator word.
-        let zstring = ZString::from(self.mem.bytes().get_slice(text_addr..text_addr + 2 * text_length)?);
-        zstring.decode(self.mem.version(), &self.mem.abbrs_table())
+        let zstring = ZString::from(self.bytes.get_slice(text_addr..text_addr + 2 * text_length)?);
+        zstring.decode(self.version, self.abbrs_table)
     }
 
     pub fn get_parent(&self, obj: Object) -> Result<Object, RuntimeError> {
-        obj.check_valid(self.mem.version())?;
-        Ok(Object::from_number(self.mem.bytes().get_u8(self.parent_addr(obj))? as u16))
+        obj.check_valid(self.version)?;
+        Ok(Object::from_number(self.bytes.get_u8(self.parent_addr(obj))? as u16))
     }
 
     pub fn get_sibling(&self, obj: Object) -> Result<Object, RuntimeError> {
-        obj.check_valid(self.mem.version())?;
-        Ok(Object::from_number(self.mem.bytes().get_u8(self.sibling_addr(obj))? as u16))
+        obj.check_valid(self.version)?;
+        Ok(Object::from_number(self.bytes.get_u8(self.sibling_addr(obj))? as u16))
     }
 
     pub fn get_child(&self, obj: Object) -> Result<Object, RuntimeError> {
-        obj.check_valid(self.mem.version())?;
-        Ok(Object::from_number(self.mem.bytes().get_u8(self.child_addr(obj))? as u16))
+        obj.check_valid(self.version)?;
+        Ok(Object::from_number(self.bytes.get_u8(self.child_addr(obj))? as u16))
     }
 
     pub fn insert_obj(&mut self, obj: Object, dest: Object) -> Result<(), RuntimeError> {
@@ -51,8 +58,8 @@ impl<'a> ObjectTable<'a> {
         // operation the child of D is O, and the sibling of O is whatever was previously the child
         // of D.) All children of O move with it. (Initially O can be at any point in the object
         // tree; it may legally have parent zero.)
-        obj.check_valid(self.mem.version())?;
-        dest.check_valid(self.mem.version())?;
+        obj.check_valid(self.version)?;
+        dest.check_valid(self.version)?;
         let prev_parent = self.get_parent(obj)?;
         if !prev_parent.is_null() {
             let mut prev_sibling = self.get_child(prev_parent)?;
@@ -75,27 +82,27 @@ impl<'a> ObjectTable<'a> {
     }
 
     pub fn get_attr(&self, obj: Object, attr: Attribute) -> Result<bool, RuntimeError> {
-        obj.check_valid(self.mem.version())?;
-        attr.check_valid(self.mem.version())?;
+        obj.check_valid(self.version)?;
+        attr.check_valid(self.version)?;
         let (addr, bit) = self.attr_addr(obj, attr)?;
-        Ok(self.mem.bytes().get_u8(addr)?.bit(bit))
+        Ok(self.bytes.get_u8(addr)?.bit(bit))
     }
 
     pub fn set_attr(&mut self, obj: Object, attr: Attribute, val: bool) -> Result<(), RuntimeError> {
-        obj.check_valid(self.mem.version())?;
-        attr.check_valid(self.mem.version())?;
+        obj.check_valid(self.version)?;
+        attr.check_valid(self.version)?;
         let (addr, bit) = self.attr_addr(obj, attr)?;
-        let byte = self.mem.bytes().get_u8(addr)?.set_bit(bit, val);
-        self.mem.bytes_mut().set_u8(addr, byte)
+        let byte = self.bytes.get_u8(addr)?.set_bit(bit, val);
+        self.bytes.set_u8(addr, byte)
     }
 
     pub fn get_prop(&self, obj: Object, prop: Property) -> Result<u16, RuntimeError> {
-        obj.check_valid(self.mem.version())?;
-        prop.check_valid(self.mem.version())?;
+        obj.check_valid(self.version)?;
+        prop.check_valid(self.version)?;
         if let Some((prop_addr, prop_size)) = self.prop_addr(obj, prop)? {
             match prop_size {
-                1 => Ok(self.mem.bytes().get_u8(prop_addr)? as u16),
-                2 => Ok(self.mem.bytes().get_u16(prop_addr)?),
+                1 => Ok(self.bytes.get_u8(prop_addr)? as u16),
+                2 => Ok(self.bytes.get_u16(prop_addr)?),
                 _ => Err(RuntimeError::InvalidPropertySize(prop_size))
             }
         } else {
@@ -107,13 +114,13 @@ impl<'a> ObjectTable<'a> {
     }
 
     pub fn set_prop(&mut self, obj: Object, prop: Property, val: u16) -> Result<(), RuntimeError> {
-        obj.check_valid(self.mem.version())?;
-        prop.check_valid(self.mem.version())?;
+        obj.check_valid(self.version)?;
+        prop.check_valid(self.version)?;
         if let Some((prop_addr, prop_size)) = self.prop_addr(obj, prop)? {
             match prop_size {
                 // TODO refactor so this goes through a writability check automatically
-                1 => self.mem.bytes_mut().set_u8(prop_addr, val as u8)?,
-                2 => self.mem.bytes_mut().set_u16(prop_addr, val)?,
+                1 => self.bytes.set_u8(prop_addr, val as u8)?,
+                2 => self.bytes.set_u16(prop_addr, val)?,
                 _ => return Err(RuntimeError::InvalidPropertySize(prop_size))
             };
             Ok(())
@@ -135,28 +142,23 @@ impl<'a> ObjectTable<'a> {
     }
 
     fn get_prop_default(&self, prop: Property) -> Result<u16, RuntimeError> {
-        // 12.2
-        // ... The ... property defaults table ... contains 31 words in Versions 1 to 3 and 63 in
-        // Versions 4 and later. ...
-        let addr = self.prop_defaults_addr() + 2 * prop.index();
-        self.mem.bytes().get_u16(addr)
-    }
-
-    fn prop_defaults_addr(&self) -> Address {
         // 12.1
         // The object table is held in dynamic memory and its byte address is stored in the word at
         // $0a in the header. ...
         // 12.2
-        // The table begins with a block known as the property defaults table.
-        Address::from_byte_address(self.mem.bytes().get_u16(Address::from_byte_address(0x000a)).unwrap())
+        // ... The ... property defaults table ... contains 31 words in Versions 1 to 3 and 63 in
+        // Versions 4 and later. ...
+        let addr = self.base_addr + 2 * prop.index();
+        self.bytes.get_u16(addr)
     }
 
     fn start_addr(&self) -> Address {
-        match self.mem.version() {
+        // TODO compute once and store in the ctor
+        match self.version {
             // 12.2
             // The table begins with a block known as the property defaults table. This contains 31
             // words in Versions 1 to 3 ...
-            Version::V1 | Version::V2 | Version::V3 => self.prop_defaults_addr() + 31 * 2
+            V1 | V2 | V3 => self.base_addr + 31 * 2
             // ... and 63 in Versions 4 and later.
         }
     }
@@ -175,29 +177,29 @@ impl<'a> ObjectTable<'a> {
     }
 
     fn parent_addr(&self, obj: Object) -> Address {
-        match self.mem.version() {
-            Version::V1 | Version::V2 | Version::V3 => self.obj_addr(obj) + 4
+        match self.version {
+            V1 | V2 | V3 => self.obj_addr(obj) + 4
         }
     }
 
     fn sibling_addr(&self, obj: Object) -> Address {
-        match self.mem.version() {
-            Version::V1 | Version::V2 | Version::V3 => self.obj_addr(obj) + 5
+        match self.version {
+            V1 | V2 | V3 => self.obj_addr(obj) + 5
         }
     }
 
     fn child_addr(&self, obj: Object) -> Address {
-        match self.mem.version() {
-            Version::V1 | Version::V2 | Version::V3 => self.obj_addr(obj) + 6
+        match self.version {
+            V1 | V2 | V3 => self.obj_addr(obj) + 6
         }
     }
 
     fn obj_props_header_addr(&self, obj: Object) -> Result<Address, RuntimeError> {
-        let offset = match self.mem.version() {
-            Version::V1 | Version::V2 | Version::V3 => 7
+        let offset = match self.version {
+            V1 | V2 | V3 => 7
         };
         Ok(Address::from_byte_address(
-            self.mem.bytes().get_u16(self.obj_addr(obj) + offset)
+            self.bytes.get_u16(self.obj_addr(obj) + offset)
                 .or(Err(RuntimeError::ObjectCorrupt(obj)))?))
     }
 
@@ -214,13 +216,13 @@ impl<'a> ObjectTable<'a> {
         // where the text-length is the number of 2-byte words making up the text, which is stored
         // in the usual format. 
         let header_addr = self.obj_props_header_addr(obj)?;
-        let text_length = self.mem.bytes().get_u8(header_addr)
+        let text_length = self.bytes.get_u8(header_addr)
             .or(Err(RuntimeError::ObjectCorrupt(obj)))?;
         Ok(header_addr + 1 + 2 * text_length as usize * 2)
     }
 
     fn prop_addr(&self, obj: Object, prop: Property) -> Result<Option<(Address, u8)>, RuntimeError> {
-        for res in PropertyIterator::new(self, obj, self.mem.version())? {
+        for res in PropertyIterator::new(self.bytes, self.obj_props_addr(obj)?, self.version)? {
             let (p, addr, size) = res?;
             if p == prop {
                 return Ok(Some((addr, size)));
@@ -230,35 +232,35 @@ impl<'a> ObjectTable<'a> {
     }
 
     fn obj_size(&self) -> usize {
-        match self.mem.version() {
-            Version::V1 | Version::V2 | Version::V3 => 9
+        match self.version {
+            V1 | V2 | V3 => 9
         }
     }
 
     fn set_parent(&mut self, obj: Object, parent: Object) -> Result<(), RuntimeError> {
-        match self.mem.version() {
+        match self.version {
             // TODO export V1 etc directly as well
-            Version::V1 | Version::V2 | Version::V3 => {
+            V1 | V2 | V3 => {
                 let addr = self.parent_addr(obj);
-                self.mem.bytes_mut().set_u8(addr, parent.0 as u8)
+                self.bytes.set_u8(addr, parent.0 as u8)
             }
         }
     }
 
     fn set_sibling(&mut self, obj: Object, sibling: Object) -> Result<(), RuntimeError> {
-        match self.mem.version() {
-            Version::V1 | Version::V2 | Version::V3 => {
+        match self.version {
+            V1 | V2 | V3 => {
                 let addr = self.sibling_addr(obj);
-                self.mem.bytes_mut().set_u8(addr, sibling.0 as u8)
+                self.bytes.set_u8(addr, sibling.0 as u8)
             }
         }
     }
 
     fn set_child(&mut self, obj: Object, child: Object) -> Result<(), RuntimeError> {
-        match self.mem.version() {
-            Version::V1 | Version::V2 | Version::V3 => {
+        match self.version {
+            V1 | V2 | V3 => {
                 let addr = self.child_addr(obj);
-                self.mem.bytes_mut().set_u8(addr, child.0 as u8)
+                self.bytes.set_u8(addr, child.0 as u8)
             }
         }
     }
@@ -330,7 +332,7 @@ impl Object {
         if match version {
             // 12.3.1
             // In Versions 1 to 3, there are at most 255 objects...
-            Version::V1 | Version::V2 | Version::V3 => self.0 >= 1 && self.0 <= 255
+            V1 | V2 | V3 => self.0 >= 1 && self.0 <= 255
         } {
             Ok(())
         } else {
@@ -364,7 +366,7 @@ impl Property {
         if match version {
             // The maximum property number isn't explicitly written in the spec, but can be
             // inferred from the way the property table is stored.
-            Version::V1 | Version::V2 | Version::V3 => self.0 >= 1 && self.0 <= 31
+            V1 | V2 | V3 => self.0 >= 1 && self.0 <= 31
         } {
             Ok(())
         } else {
@@ -374,17 +376,17 @@ impl Property {
 }
 
 struct PropertyIterator<'a> {
-    obj_table: &'a ObjectTable<'a>,
+    bytes: &'a Bytes,
     version: Version,
     next_addr: Address,
 }
 
 impl<'a> PropertyIterator<'a> {
-    fn new(obj_table: &'a ObjectTable<'a>, obj: Object, version: Version) -> Result<PropertyIterator<'a>, RuntimeError> {
+    fn new(bytes: &'a Bytes, props_addr: Address, version: Version) -> Result<PropertyIterator<'a>, RuntimeError> {
         Ok(PropertyIterator {
-            obj_table: obj_table,
+            bytes: bytes,
             version: version,
-            next_addr: obj_table.obj_props_addr(obj)?,
+            next_addr: props_addr,
         })
     }
 }
@@ -401,8 +403,8 @@ impl<'a> Iterator for PropertyIterator<'a> {
         // property number. A property list is terminated by a size byte of 0. (It is otherwise
         // illegal for a size byte to be a multiple of 32.)
         match self.version {
-            Version::V1 | Version::V2 | Version::V3 => {
-                match self.obj_table.mem.bytes().get_u8(self.next_addr) {
+            V1 | V2 | V3 => {
+                match self.bytes.get_u8(self.next_addr) {
                     Ok(size_byte) => {
                         if size_byte == 0 {
                             return None;
@@ -437,7 +439,7 @@ impl Attribute {
         if match version {
             // The maximum property number isn't explicitly written in the spec, but can be
             // inferred from the way the property table is stored.
-            Version::V1 | Version::V2 | Version::V3 => self.0 <= 31
+            V1 | V2 | V3 => self.0 <= 31
         } {
             Ok(())
         } else {

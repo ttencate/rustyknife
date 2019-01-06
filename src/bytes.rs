@@ -1,11 +1,12 @@
 use crate::bits::*;
 use crate::errors::RuntimeError;
-use crate::mem::Version;
+use crate::version::*;
 use crate::zstring::ZString;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::ops::*;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bytes(Vec<u8>);
 
 impl Bytes {
@@ -126,7 +127,7 @@ impl Address {
         // R_O and S_O are the routine and strings offsets (specified in the header as words at $28
         // and $2a, respectively).
         match version {
-            Version::V1 | Version::V2 | Version::V3 => Address(packed_addr as usize * 2)
+            V1 | V2 | V3 => Address(packed_addr as usize * 2)
         }
     }
 

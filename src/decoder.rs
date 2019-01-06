@@ -3,15 +3,16 @@ use crate::bits::*;
 use crate::bytes::Address;
 use crate::instr::*;
 use crate::mem::*;
+use crate::version::*;
 
 pub struct InstructionDecoder<'a> {
-    mem: &'a Memory,
+    mem: &'a Memory<'a>,
     start_addr: Address,
     next_addr: Address,
 }
 
 impl<'a> InstructionDecoder<'a> {
-    pub fn new(mem: &'a Memory, pc: Address) -> InstructionDecoder<'a> {
+    pub fn new(mem: &'a Memory<'a>, pc: Address) -> InstructionDecoder<'a> {
         InstructionDecoder {
             mem: mem,
             start_addr: pc,
@@ -155,8 +156,7 @@ impl<'a> InstructionDecoder<'a> {
                     // If the opcode is 190 ($BE in hexadecimal) and the version is 5 or later, the
                     // form is "extended". ...
                     match self.mem.version() {
-                        Version::V1 | Version::V2 | Version::V3 =>
-                            Err(RuntimeError::InvalidInstruction(opcode_byte, self.loc()))
+                        V1 | V2 | V3 => Err(RuntimeError::InvalidInstruction(opcode_byte, self.loc()))
                     }
                 } else {
                     // ... Otherwise, the form is "long".
@@ -375,7 +375,7 @@ impl<'a> InstructionDecoder<'a> {
         let zstring = self.mem.bytes().get_zstring(self.next_addr)
             .or(Err(RuntimeError::ProgramCounterOutOfRange(self.loc())))?;
         self.next_addr += zstring.len();
-        zstring.decode(self.mem.version(), &self.mem.abbrs_table())
+        zstring.decode(self.mem.version(), self.mem.abbrs_table())
     }
 
     fn loc(&self) -> ErrorLocation {
