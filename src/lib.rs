@@ -14,9 +14,6 @@ mod version;
 mod zmachine;
 mod zstring;
 
-#[cfg(test)]
-mod tests;
-
 pub use crate::bytes::Address;
 pub use crate::instr::Instruction;
 pub use crate::mem::Memory;
