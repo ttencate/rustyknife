@@ -157,7 +157,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let attribute = Attribute::from_number(self.eval(var_operands.get(1)?)? as u8);
                 self.mem.obj_table_mut().set_attr(object, attribute, true)
             }
-            // Instruction::ClearAttr(var_operands) =>
+            Instruction::ClearAttr(var_operands) => {
+                // clear_attr
+                // 2OP:12 C clear_attr object attribute
+                // Make object not have the attribute numbered attribute.
+                let object = Object::from_number(self.eval(var_operands.get(0)?)?);
+                let attribute = Attribute::from_number(self.eval(var_operands.get(1)?)? as u8);
+                self.mem.obj_table_mut().set_attr(object, attribute, false)
+            }
             Instruction::Store(var_operands) => {
                 // store
                 // 2OP:13 D store (variable) value
