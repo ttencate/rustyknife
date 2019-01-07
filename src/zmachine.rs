@@ -97,9 +97,9 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // 2OP:4 4 dec_chk (variable) value ?(label)
                 // Decrement variable, and branch if it is now less than the given value.
                 let variable = self.variable(self.eval(var_operands.get(0)?)?)?;
-                let value = self.eval(var_operands.get(1)?)?;
-                let new_val = self.eval_var(variable)?.wrapping_sub(1);
-                self.store(variable, new_val)?;
+                let value = self.eval(var_operands.get(1)?)? as i16;
+                let new_val = self.eval_var(variable)?.wrapping_sub(1) as i16;
+                self.store(variable, new_val as u16)?;
                 self.cond_branch(new_val < value, branch)
             }
             Instruction::IncChk(var_operands, branch) => {
@@ -107,9 +107,9 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // 2OP:5 5 inc_chk (variable) value ?(label)
                 // Increment variable, and branch if now greater than value.
                 let variable = self.variable(self.eval(var_operands.get(0)?)?)?;
-                let value = self.eval(var_operands.get(1)?)?;
-                let new_val = self.eval_var(variable)?.wrapping_add(1);
-                self.store(variable, new_val)?;
+                let value = self.eval(var_operands.get(1)?)? as i16;
+                let new_val = self.eval_var(variable)?.wrapping_add(1) as i16;
+                self.store(variable, new_val as u16)?;
                 self.cond_branch(new_val > value, branch)
             }
             Instruction::Jin(var_operands, branch) => {
