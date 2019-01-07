@@ -34,10 +34,6 @@ quick_error! {
         InvalidInstruction(opcode: u8, loc: ErrorLocation) {
             display("invalid instruction {:?} at {:?}", opcode, loc)
         }
-        InvalidOperandCount(expected: usize, actual: usize, loc: ErrorLocation) {
-            display("invalid operand count: expected {:?} but got {:?} at {:?}",
-                    expected, actual, loc)
-        }
         InvalidOperandTypes(types: u8, loc: ErrorLocation) {
             display("invalid operand types {:#b} at {:?}", types, loc)
         }

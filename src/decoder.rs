@@ -34,6 +34,22 @@ impl<'a> InstructionDecoder<'a> {
         //
         // Bracketed sections are not present in all opcodes. (A few opcodes take both "store" and
         // "branch".)
+        //
+        // ...
+        //
+        // Briefly, the first byte of an instruction can be decoded using the following table:
+        //
+        //   $00 -- $1f  long      2OP     small constant, small constant
+        //   $20 -- $3f  long      2OP     small constant, variable
+        //   $40 -- $5f  long      2OP     variable, small constant
+        //   $60 -- $7f  long      2OP     variable, variable
+        //   $80 -- $8f  short     1OP     large constant
+        //   $90 -- $9f  short     1OP     small constant
+        //   $a0 -- $af  short     1OP     variable
+        //   $b0 -- $bf  short     0OP
+        //   except $be  extended opcode given in next byte
+        //   $c0 -- $df  variable  2OP     (operand types in next byte)
+        //   $e0 -- $ff  variable  VAR     (operand types in next byte(s))
 
         // For a more gentle introduction to the instruction encoding:
         // https://ericlippert.com/2016/03/09/canyon-view/
@@ -47,33 +63,32 @@ impl<'a> InstructionDecoder<'a> {
 
         let instr = match operand_count {
             OperandCount::Two => {
-                let left = self.read_operand(operand_types[0])?;
-                let right = self.read_operand(operand_types[1])?;
+                let var_operands = self.read_var_operands(&operand_types)?;
                 match opcode_number {
-                    0x01 => Instruction::Je(left, right, self.read_branch()?),
-                    0x02 => Instruction::Jl(left, right, self.read_branch()?),
-                    0x03 => Instruction::Jg(left, right, self.read_branch()?),
-                    0x04 => Instruction::DecChk(left, right, self.read_branch()?),
-                    0x05 => Instruction::IncChk(left, right, self.read_branch()?),
-                    0x06 => Instruction::Jin(left, right, self.read_branch()?),
-                    0x07 => Instruction::Test(left, right, self.read_branch()?),
-                    0x08 => Instruction::Or(left, right, self.read_store_var()?),
-                    0x09 => Instruction::And(left, right, self.read_store_var()?),
-                    0x0a => Instruction::TestAttr(left, right, self.read_branch()?),
-                    0x0b => Instruction::SetAttr(left, right),
-                    0x0c => Instruction::ClearAttr(left, right),
-                    0x0d => Instruction::Store(left, right),
-                    0x0e => Instruction::InsertObj(left, right),
-                    0x0f => Instruction::Loadw(left, right, self.read_store_var()?),
-                    0x10 => Instruction::Loadb(left, right, self.read_store_var()?),
-                    0x11 => Instruction::GetProp(left, right, self.read_store_var()?),
-                    0x12 => Instruction::GetPropAddr(left, right, self.read_store_var()?),
-                    0x13 => Instruction::GetNextProp(left, right, self.read_store_var()?),
-                    0x14 => Instruction::Add(left, right, self.read_store_var()?),
-                    0x15 => Instruction::Sub(left, right, self.read_store_var()?),
-                    0x16 => Instruction::Mul(left, right, self.read_store_var()?),
-                    0x17 => Instruction::Div(left, right, self.read_store_var()?),
-                    0x18 => Instruction::Mod(left, right, self.read_store_var()?),
+                    0x01 => Instruction::Je(var_operands, self.read_branch()?),
+                    0x02 => Instruction::Jl(var_operands, self.read_branch()?),
+                    0x03 => Instruction::Jg(var_operands, self.read_branch()?),
+                    0x04 => Instruction::DecChk(var_operands, self.read_branch()?),
+                    0x05 => Instruction::IncChk(var_operands, self.read_branch()?),
+                    0x06 => Instruction::Jin(var_operands, self.read_branch()?),
+                    0x07 => Instruction::Test(var_operands, self.read_branch()?),
+                    0x08 => Instruction::Or(var_operands, self.read_store_var()?),
+                    0x09 => Instruction::And(var_operands, self.read_store_var()?),
+                    0x0a => Instruction::TestAttr(var_operands, self.read_branch()?),
+                    0x0b => Instruction::SetAttr(var_operands),
+                    0x0c => Instruction::ClearAttr(var_operands),
+                    0x0d => Instruction::Store(var_operands),
+                    0x0e => Instruction::InsertObj(var_operands),
+                    0x0f => Instruction::Loadw(var_operands, self.read_store_var()?),
+                    0x10 => Instruction::Loadb(var_operands, self.read_store_var()?),
+                    0x11 => Instruction::GetProp(var_operands, self.read_store_var()?),
+                    0x12 => Instruction::GetPropAddr(var_operands, self.read_store_var()?),
+                    0x13 => Instruction::GetNextProp(var_operands, self.read_store_var()?),
+                    0x14 => Instruction::Add(var_operands, self.read_store_var()?),
+                    0x15 => Instruction::Sub(var_operands, self.read_store_var()?),
+                    0x16 => Instruction::Mul(var_operands, self.read_store_var()?),
+                    0x17 => Instruction::Div(var_operands, self.read_store_var()?),
+                    0x18 => Instruction::Mod(var_operands, self.read_store_var()?),
                     _ => return Err(RuntimeError::UnknownOpcode(operand_count, opcode_number, self.loc()))
                 }
             }
@@ -121,7 +136,7 @@ impl<'a> InstructionDecoder<'a> {
                 }
             }
             OperandCount::Var => {
-                let var_operands = self.read_var_operands(operand_count, &operand_types)?;
+                let var_operands = self.read_var_operands(&operand_types)?;
                 match opcode_number {
                     0x00 => Instruction::Call(var_operands, self.read_store_var()?),
                     0x01 => Instruction::Storew(var_operands),
@@ -278,7 +293,7 @@ impl<'a> InstructionDecoder<'a> {
         })
     }
 
-    fn read_var_operands(&mut self, operand_count: OperandCount, operand_types: &Vec<OperandType>) -> Result<VarOperands, RuntimeError> {
+    fn read_var_operands(&mut self, operand_types: &Vec<OperandType>) -> Result<VarOperands, RuntimeError> {
         // 4.5
         // The operands are given next. Operand counts of 0OP, 1OP or 2OP require 0, 1 or 2
         // operands to be given, respectively. If the count is VAR, there must be as many operands
@@ -289,12 +304,9 @@ impl<'a> InstructionDecoder<'a> {
                 operands.push(self.read_operand(operand_type)?);
             }
         }
-        if let Some(expected_operand_count) = operand_count.count() {
-            let actual_operand_count = operands.len();
-            if actual_operand_count != expected_operand_count {
-                return Err(RuntimeError::InvalidOperandCount(expected_operand_count, actual_operand_count, self.loc()));
-            }
-        }
+        // Note that the spec is misleading here: the nominally 2OP instruction "je" can occur in
+        // VAR form and takes 1..=4 operands in that form. So we don't check at this point, leaving
+        // it to the actual execution stage to complain.
         Ok(VarOperands::from(operands))
     }
 
@@ -452,15 +464,4 @@ pub enum OperandCount {
     One,
     Two,
     Var,
-}
-
-impl OperandCount {
-    fn count(&self) -> Option<usize> {
-        match self {
-            OperandCount::Zero => Some(0),
-            OperandCount::One => Some(1),
-            OperandCount::Two => Some(2),
-            OperandCount::Var => None,
-        }
-    }
 }

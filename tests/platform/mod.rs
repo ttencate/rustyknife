@@ -1,16 +1,30 @@
 use rustyknife::*;
 
-pub struct TestPlatform {}
+pub struct TestPlatform {
+    trace: bool,
+}
 
 impl TestPlatform {
     pub fn new() -> Self {
-        TestPlatform {}
+        TestPlatform {
+            trace: false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn enable_trace(&mut self) {
+        self.trace = true;
     }
 }
 
 impl Platform for TestPlatform {
     fn print(&mut self, string: &str) {
-        // TODO probably need to disable line buffering
         print!("{}", string);
+    }
+
+    fn next_instr(&mut self, pc: Address, call_stack_depth: usize, instr: &Instruction) {
+        if self.trace {
+            eprintln!("{:6}  {:}{:?}", pc, "  ".repeat(call_stack_depth), instr);
+        }
     }
 }

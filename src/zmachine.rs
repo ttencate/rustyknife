@@ -61,110 +61,113 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
 
     fn exec_instr(&mut self, instr: Instruction) -> Result<(), RuntimeError> {
         match instr {
-            Instruction::Je(left, right, branch) => {
+            Instruction::Je(var_operands, branch) => {
                 // je
                 // 2OP:1 1 je a b c d ?(label)
                 // Jump if a is equal to any of the subsequent operands. (Thus @je a never jumps
                 // and @je a b jumps if a = b.)
                 // je with just 1 operand is not permitted.
-                //
-                // I don't see how je could have more or fewer than 2 operands: the opcode is
-                // always in the range 0..=127 so it's considered long form, never variable form.
-                // And long form implies 2OP.
-                self.cond_branch(self.eval(left)? == self.eval(right)?, branch)
+                let a = self.eval(var_operands.get(0)?)?;
+                let mut cond = false;
+                for i in 1..var_operands.len() {
+                    if a == self.eval(var_operands.get(i)?)? {
+                        cond = true;
+                    }
+                }
+                self.cond_branch(cond, branch)
             }
-            // Instruction::Jl(left, right, branch) =>
-            // Instruction::Jg(left, right, branch) =>
-            // Instruction::DecChk(left, right, branch) =>
-            Instruction::IncChk(left, right, branch) => {
+            // Instruction::Jl(var_operands, branch) =>
+            // Instruction::Jg(var_operands, branch) =>
+            // Instruction::DecChk(var_operands, branch) =>
+            Instruction::IncChk(var_operands, branch) => {
                 // inc_chk
                 // 2OP:5 5 inc_chk (variable) value ?(label)
                 // Increment variable, and branch if now greater than value.
-                let variable = self.variable(self.eval(left)?)?;
-                let value = self.eval(right)?;
+                let variable = self.variable(self.eval(var_operands.get(0)?)?)?;
+                let value = self.eval(var_operands.get(1)?)?;
                 let new_val = self.eval_var(variable)?.wrapping_add(1);
                 self.store(variable, new_val)?;
                 self.cond_branch(new_val > value, branch)
             }
-            Instruction::Jin(left, right, branch) => {
+            Instruction::Jin(var_operands, branch) => {
                 // jin
                 // 2OP:6 6 jin obj1 obj2 ?(label)
                 // Jump if object a is a direct child of b, i.e., if parent of a is b.
-                let a = Object::from_number(self.eval(left)?);
-                let b = Object::from_number(self.eval(right)?);
+                let a = Object::from_number(self.eval(var_operands.get(0)?)?);
+                let b = Object::from_number(self.eval(var_operands.get(1)?)?);
                 let parent_of_a = self.mem.obj_table().get_parent(a)?;
                 self.cond_branch(parent_of_a == b, branch)
             }
-            // Instruction::Test(left, right, branch) =>
-            // Instruction::Or(left, right, store) =>
-            Instruction::And(left, right, store) => {
+            // Instruction::Test(var_operands, branch) =>
+            // Instruction::Or(var_operands, store) =>
+            Instruction::And(var_operands, store) => {
                 // and
                 // 2OP:9 9 and a b -> (result)
                 // Bitwise AND.
-                let a = self.eval(left)?;
-                let b = self.eval(right)?;
+                let a = self.eval(var_operands.get(0)?)?;
+                let b = self.eval(var_operands.get(1)?)?;
                 self.store(store, a & b)
             }
-            Instruction::TestAttr(left, right, branch) => {
+            Instruction::TestAttr(var_operands, branch) => {
                 // test_attr
                 // 2OP:10 A test_attr object attribute ?(label)
                 // Jump if object has attribute.
-                let object = Object::from_number(self.eval(left)?);
-                let attribute = Attribute::from_number(self.eval(right)? as u8);
+                let object = Object::from_number(self.eval(var_operands.get(0)?)?);
+                let attribute = Attribute::from_number(self.eval(var_operands.get(1)?)? as u8);
                 let cond = self.mem.obj_table().get_attr(object, attribute)?;
                 self.cond_branch(cond, branch)
             }
-            Instruction::SetAttr(left, right) => {
+            Instruction::SetAttr(var_operands) => {
                 // set_attr
                 // 2OP:11 B set_attr object attribute
                 // Make object have the attribute numbered attribute.
-                let object = Object::from_number(self.eval(left)?);
-                let attribute = Attribute::from_number(self.eval(right)? as u8);
+                let object = Object::from_number(self.eval(var_operands.get(0)?)?);
+                let attribute = Attribute::from_number(self.eval(var_operands.get(1)?)? as u8);
                 self.mem.obj_table_mut().set_attr(object, attribute, true)
             }
-            // Instruction::ClearAttr(left, right) =>
-            Instruction::Store(left, right) => {
+            // Instruction::ClearAttr(var_operands) =>
+            Instruction::Store(var_operands) => {
                 // store
                 // 2OP:13 D store (variable) value
                 // Set the VARiable referenced by the operand to value.
-                let variable = self.variable(self.eval(left)?)?;
-                let value = self.eval(right)?;
+                let variable = self.variable(self.eval(var_operands.get(0)?)?)?;
+                let value = self.eval(var_operands.get(1)?)?;
                 self.store(variable, value)
             }
-            Instruction::InsertObj(left, right) => {
+            Instruction::InsertObj(var_operands) => {
                 // insert_obj
                 // 2OP:14 E insert_obj object destination
                 // Moves object O to become the first child of the destination object D. (Thus,
                 // after the operation the child of D is O, and the sibling of O is whatever was
                 // previously the child of D.) All children of O move with it. (Initially O can be
                 // at any point in the object tree; it may legally have parent zero.)
-                let object = Object::from_number(self.eval(left)?);
-                let destination = Object::from_number(self.eval(right)?);
+                let object = Object::from_number(self.eval(var_operands.get(0)?)?);
+                let destination = Object::from_number(self.eval(var_operands.get(1)?)?);
                 self.mem.obj_table_mut().insert_obj(object, destination)
             }
-            Instruction::Loadw(left, right, store) => {
+            Instruction::Loadw(var_operands, store) => {
                 // loadw
                 // 2OP:15 F loadw array word-index -> (result)
                 // Stores array-->word-index (i.e., the word at address array+2*word-index, which
                 // must lie in static or dynamic memory).
-                let array = self.eval(left)?;
-                let word_index = self.eval(right)?;
+                let array = self.eval(var_operands.get(0)?)?;
+                let word_index = self.eval(var_operands.get(1)?)?;
                 let addr = Address::from_byte_address(array + 2 * word_index);
                 let val = self.mem.bytes().get_u16(addr)?;
                 self.store(store, val)
             }
-            Instruction::Loadb(left, right, store) => {
+            Instruction::Loadb(var_operands, store) => {
                 // loadb
                 // 2OP:16 10 loadb array byte-index -> (result)
                 // Stores array->byte-index (i.e., the byte at address array+byte-index, which must
                 // lie in static or dynamic memory).
-                let array = self.eval(left)?;
-                let byte_index = self.eval(right)?;
+                let array = self.eval(var_operands.get(0)?)?;
+                let byte_index = self.eval(var_operands.get(1)?)?;
                 let addr = Address::from_byte_address(array + byte_index);
                 let val = self.mem.bytes().get_u8(addr)?;
                 self.store(store, val as u16)
             }
-            Instruction::GetProp(left, right, store) => {
+            Instruction::GetProp(var_operands, store) => {
                 // get_prop
                 // 2OP:17 11 get_prop object property -> (result)
                 // Read property from object (resulting in the default value if it had no such
@@ -172,24 +175,28 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // If it has length 2, the first two bytes of the property are taken as a word
                 // value. It is illegal for the opcode to be used if the property has length
                 // greater than 2, and the result is unspecified.
-                let object = Object::from_number(self.eval(left)?);
-                let property = Property::from_number(self.eval(right)? as u8);
+                let object = Object::from_number(self.eval(var_operands.get(0)?)?);
+                let property = Property::from_number(self.eval(var_operands.get(1)?)? as u8);
                 let val = self.mem.obj_table().get_prop(object, property)?;
                 self.store(store, val)
             }
-            // Instruction::GetPropAddr(left, right, store) =>
-            // Instruction::GetNextProp(left, right, store) =>
-            Instruction::Add(left, right, store) => {
+            // Instruction::GetPropAddr(var_operands, store) =>
+            // Instruction::GetNextProp(var_operands, store) =>
+            Instruction::Add(var_operands, store) => {
                 // add
                 // 2OP:20 14 add a b -> (result)
                 // Signed 16-bit addition.
-                self.store(store, self.eval(left)?.wrapping_add(self.eval(right)?))
+                let a = self.eval(var_operands.get(0)?)?;
+                let b = self.eval(var_operands.get(1)?)?;
+                self.store(store, a.wrapping_add(b))
             }
-            Instruction::Sub(left, right, store) => {
+            Instruction::Sub(var_operands, store) => {
                 // sub
                 // 2OP:21 15 sub a b -> (result)
                 // Signed 16-bit subtraction.
-                self.store(store, self.eval(left)?.wrapping_sub(self.eval(right)?))
+                let a = self.eval(var_operands.get(0)?)?;
+                let b = self.eval(var_operands.get(1)?)?;
+                self.store(store, a.wrapping_sub(b))
             }
             // Instruction::Mul(left, right, store) =>
             // Instruction::Div(left, right, store) =>
