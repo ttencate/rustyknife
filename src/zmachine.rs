@@ -409,7 +409,16 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let value = self.eval(var_operands.get(2)?)?;
                 self.store_u16(Address::from_byte_address(array + 2 * word_index), value)
             }
-            // Instruction::Storeb(var_operands) =>
+            Instruction::Storeb(var_operands) => {
+                // storeb
+                // VAR:226 2 storeb array byte-index value
+                // array->byte-index = value, i.e. stores the given value in the byte at address
+                // array+byte-index (which must lie in dynamic memory). (See loadb.)
+                let array = self.eval(var_operands.get(0)?)?;
+                let byte_index = self.eval(var_operands.get(1)?)?;
+                let value = self.eval(var_operands.get(2)?)?;
+                self.store_u8(Address::from_byte_address(array + byte_index), value as u8)
+            }
             Instruction::PutProp(var_operands) => {
                 // put_prop
                 // VAR:227 3 put_prop object property value
@@ -616,6 +625,11 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
             Variable::Local(local) => self.frame_mut().set_local(local, val),
             Variable::Global(global) => self.mem.globals_mut().set(global, val),
         }
+    }
+
+    fn store_u8(&mut self, addr: Address, val: u8) -> Result<(), RuntimeError> {
+        // TODO writability check
+        self.mem.bytes_mut().set_u8(addr, val)
     }
 
     fn store_u16(&mut self, addr: Address, val: u16) -> Result<(), RuntimeError> {
