@@ -83,6 +83,18 @@ impl ObjectTable {
         Ok(())
     }
 
+    pub fn guess_num_objects(&self) -> Result<usize, RuntimeError> {
+        // The story file doesn't explictly store the number of objects. But Eric Lippert says: "In
+        // practice, every story file has the property header for the properties of object 1
+        // immediately following the last object entry. There is of course no requirement that the
+        // property block for any object be anywhere, but this convention is consistently
+        // followed."
+        // https://ericlippert.com/2016/03/02/egyptian-room/
+        let start = self.start_addr();
+        let end = self.obj_props_addr(Object::from_number(1))?;
+        Ok((end - start) / self.obj_size())
+    }
+
     pub fn get_attr(&self, obj: Object, attr: Attribute) -> Result<bool, RuntimeError> {
         obj.check_valid(self.version)?;
         attr.check_valid(self.version)?;
@@ -98,52 +110,40 @@ impl ObjectTable {
         self.bytes.borrow_mut().set_u8(addr, byte)
     }
 
-    pub fn get_prop(&self, obj: Object, prop: Property) -> Result<u16, RuntimeError> {
+    pub fn get_prop_ref(&self, obj: Object, prop: Property) -> Result<Option<PropertyRef>, RuntimeError> {
         obj.check_valid(self.version)?;
         prop.check_valid(self.version)?;
-        if let Some((prop_addr, prop_size)) = self.prop_addr(obj, prop)? {
-            match prop_size {
-                1 => Ok(self.bytes.borrow().get_u8(prop_addr)? as u16),
-                2 => Ok(self.bytes.borrow().get_u16(prop_addr)?),
-                _ => Err(RuntimeError::InvalidPropertySize(prop_size))
+        for res in self.iter_props(obj)? {
+            let prop_ref = res?;
+            if prop_ref.prop == prop {
+                return Ok(Some(prop_ref))
             }
-        } else {
-            // 12.2
-            // ... When the game attempts to read the value of property n for an object which does
-            // not provide property n, the n-th entry in this table is the resulting value.
-            self.get_prop_default(prop)
+        }
+        Ok(None)
+    }
+
+    pub fn get_prop(&self, prop_ref: &PropertyRef) -> Result<u16, RuntimeError> {
+        match prop_ref.len {
+            1 => Ok(self.bytes.borrow().get_u8(prop_ref.addr)? as u16),
+            2 => Ok(self.bytes.borrow().get_u16(prop_ref.addr)?),
+            _ => Err(RuntimeError::InvalidPropertySize(prop_ref.len))
         }
     }
 
-    pub fn set_prop(&mut self, obj: Object, prop: Property, val: u16) -> Result<(), RuntimeError> {
-        obj.check_valid(self.version)?;
-        prop.check_valid(self.version)?;
-        if let Some((prop_addr, prop_size)) = self.prop_addr(obj, prop)? {
-            match prop_size {
-                // TODO refactor so this goes through a writability check automatically
-                1 => self.bytes.borrow_mut().set_u8(prop_addr, val as u8)?,
-                2 => self.bytes.borrow_mut().set_u16(prop_addr, val)?,
-                _ => return Err(RuntimeError::InvalidPropertySize(prop_size))
-            };
-            Ok(())
-        } else {
-            Err(RuntimeError::PropertyNotFound(obj, prop))
+    pub fn set_prop(&mut self, prop_ref: &PropertyRef, val: u16) -> Result<(), RuntimeError> {
+        match prop_ref.len {
+            // TODO refactor so this goes through a writability check automatically
+            1 => self.bytes.borrow_mut().set_u8(prop_ref.addr, val as u8),
+            2 => self.bytes.borrow_mut().set_u16(prop_ref.addr, val),
+            _ => Err(RuntimeError::InvalidPropertySize(prop_ref.len)),
         }
     }
 
-    pub fn guess_num_objects(&self) -> Result<usize, RuntimeError> {
-        // The story file doesn't explictly store the number of objects. But Eric Lippert says: "In
-        // practice, every story file has the property header for the properties of object 1
-        // immediately following the last object entry. There is of course no requirement that the
-        // property block for any object be anywhere, but this convention is consistently
-        // followed."
-        // https://ericlippert.com/2016/03/02/egyptian-room/
-        let start = self.start_addr();
-        let end = self.obj_props_addr(Object::from_number(1))?;
-        Ok((end - start) / self.obj_size())
+    pub fn iter_props(&self, obj: Object) -> Result<PropertyIterator, RuntimeError> {
+        PropertyIterator::new(self.bytes.clone(), self.obj_props_addr(obj)?, self.version)
     }
 
-    fn get_prop_default(&self, prop: Property) -> Result<u16, RuntimeError> {
+    pub fn get_prop_default(&self, prop: Property) -> Result<u16, RuntimeError> {
         // 12.1
         // The object table is held in dynamic memory and its byte address is stored in the word at
         // $0a in the header. ...
@@ -221,16 +221,6 @@ impl ObjectTable {
         let text_length = self.bytes.borrow().get_u8(header_addr)
             .or(Err(RuntimeError::ObjectCorrupt(obj)))?;
         Ok(header_addr + 1 + 2 * text_length as usize * 2)
-    }
-
-    fn prop_addr(&self, obj: Object, prop: Property) -> Result<Option<(Address, u8)>, RuntimeError> {
-        for res in PropertyIterator::new(&self.bytes.borrow(), self.obj_props_addr(obj)?, self.version)? {
-            let (p, addr, size) = res?;
-            if p == prop {
-                return Ok(Some((addr, size)));
-            }
-        }
-        Ok(None)
     }
 
     fn obj_size(&self) -> usize {
@@ -356,8 +346,20 @@ impl Display for Object {
 pub struct Property(u8);
 
 impl Property {
+    pub fn null() -> Property {
+        Property(0)
+    }
+
     pub fn from_number(num: u8) -> Property {
         Property(num as u8)
+    }
+
+    pub fn to_number(self) -> u8 {
+        self.0
+    }
+
+    pub fn is_null(self) -> bool {
+        self.0 == 0
     }
 
     fn index(self) -> usize {
@@ -377,14 +379,35 @@ impl Property {
     }
 }
 
-struct PropertyIterator<'a> {
-    bytes: &'a Bytes,
+#[derive(Debug, Clone)]
+pub struct PropertyRef {
+    prop: Property,
+    addr: Address,
+    len: u8,
+}
+
+impl PropertyRef {
+    pub fn prop(&self) -> Property {
+        self.prop
+    }
+
+    pub fn addr(&self) -> Address {
+        self.addr
+    }
+
+    pub fn len(&self) -> u8 {
+        self.len
+    }
+}
+
+pub struct PropertyIterator {
+    bytes: Rc<RefCell<Bytes>>,
     version: Version,
     next_addr: Address,
 }
 
-impl<'a> PropertyIterator<'a> {
-    fn new(bytes: &'a Bytes, props_addr: Address, version: Version) -> Result<PropertyIterator<'a>, RuntimeError> {
+impl PropertyIterator {
+    fn new(bytes: Rc<RefCell<Bytes>>, props_addr: Address, version: Version) -> Result<PropertyIterator, RuntimeError> {
         Ok(PropertyIterator {
             bytes: bytes,
             version: version,
@@ -393,8 +416,8 @@ impl<'a> PropertyIterator<'a> {
     }
 }
 
-impl<'a> Iterator for PropertyIterator<'a> {
-    type Item = Result<(Property, Address, u8), RuntimeError>;
+impl Iterator for PropertyIterator {
+    type Item = Result<PropertyRef, RuntimeError>;
     fn next(&mut self) -> Option<Self::Item> {
         // In Versions 1 to 3, each property is stored as a block
         //
@@ -406,17 +429,17 @@ impl<'a> Iterator for PropertyIterator<'a> {
         // illegal for a size byte to be a multiple of 32.)
         match self.version {
             V1 | V2 | V3 => {
-                match self.bytes.get_u8(self.next_addr) {
+                match self.bytes.borrow().get_u8(self.next_addr) {
                     Ok(size_byte) => {
                         if size_byte == 0 {
                             return None;
                         }
                         let prop_num = size_byte.bits(BIT0..=BIT4);
                         let prop = Property::from_number(prop_num);
-                        let size = size_byte.bits(BIT5..=BIT7) + 1;
-                        let item = Ok((prop, self.next_addr + 1, size));
-                        self.next_addr += 1 + size;
-                        Some(item)
+                        let len = size_byte.bits(BIT5..=BIT7) + 1;
+                        let prop_ref = Ok(PropertyRef { prop: prop, addr: self.next_addr + 1, len: len });
+                        self.next_addr += 1 + len;
+                        Some(prop_ref)
                     }
                     Err(err) => {
                         Some(Err(err))

@@ -99,6 +99,10 @@ impl From<Vec<u8>> for Bytes {
 pub struct Address(usize);
 
 impl Address {
+    pub const fn null() -> Address {
+        Address(0)
+    }
+
     pub const fn from_byte_address(addr: u16) -> Address {
         // 1.2.1
         // A byte address specifies a byte in memory in the range 0 up to the last byte of static
@@ -129,6 +133,10 @@ impl Address {
         match version {
             V1 | V2 | V3 => Address(packed_addr as usize * 2)
         }
+    }
+
+    pub fn to_byte_address(self) -> u16 {
+        self.0 as u16
     }
 
     fn to_index(self) -> usize {

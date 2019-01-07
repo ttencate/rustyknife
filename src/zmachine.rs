@@ -217,11 +217,56 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // greater than 2, and the result is unspecified.
                 let object = Object::from_number(self.eval(var_operands.get(0)?)?);
                 let property = Property::from_number(self.eval(var_operands.get(1)?)? as u8);
-                let val = self.mem.obj_table().get_prop(object, property)?;
+                let val = if let Some(prop_ref) = self.mem.obj_table().get_prop_ref(object, property)? {
+                    self.mem.obj_table().get_prop(&prop_ref)?
+                } else {
+                    // 12.2
+                    // ... When the game attempts to read the value of property n for an object
+                    // which does not provide property n, the n-th entry in this table is the
+                    // resulting value.
+                    self.mem.obj_table().get_prop_default(property)?
+                };
                 self.store(store, val)
             }
-            // Instruction::GetPropAddr(var_operands, store) =>
-            // Instruction::GetNextProp(var_operands, store) =>
+            Instruction::GetPropAddr(var_operands, store) => {
+                // get_prop_addr
+                // 2OP:18 12 get_prop_addr object property -> (result)
+                // Get the byte address (in dynamic memory) of the property data for the given
+                // object's property. This must return 0 if the object hasn't got the property.
+                let object = Object::from_number(self.eval(var_operands.get(0)?)?);
+                let property = Property::from_number(self.eval(var_operands.get(1)?)? as u8);
+                let addr = if let Some(prop_ref) = self.mem.obj_table().get_prop_ref(object, property)? {
+                    prop_ref.addr()
+                } else {
+                    Address::null()
+                };
+                self.store(store, addr.to_byte_address())
+            }
+            Instruction::GetNextProp(var_operands, store) => {
+                // get_next_prop
+                // 2OP:19 13 get_next_prop object property -> (result)
+                // Gives the number of the next property provided by the quoted object. This may be
+                // zero, indicating the end of the property list; if called with zero, it gives the
+                // first property number present. It is illegal to try to find the next property of
+                // a property which does not exist, and an interpreter should halt with an error
+                // message (if it can efficiently check this condition).
+                let object = Object::from_number(self.eval(var_operands.get(0)?)?);
+                let property = Property::from_number(self.eval(var_operands.get(1)?)? as u8);
+                let mut iter = self.mem.obj_table().iter_props(object)?;
+                if property.is_null() {
+                    while let Some(res) = iter.next() {
+                        if res?.prop() == property {
+                            break;
+                        }
+                    }
+                }
+                let next_prop = if let Some(res) = iter.next() {
+                    res?.prop()
+                } else {
+                    Property::null()
+                };
+                self.store(store, next_prop.to_number() as u16)
+            }
             Instruction::Add(var_operands, store) => {
                 // add
                 // 2OP:20 14 add a b -> (result)
@@ -474,10 +519,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // into a 1-byte property results in the property value 255.) As with get_prop the
                 // property length must not be more than 2: if it is, the behaviour of the opcode
                 // is undefined.
-                let obj = self.eval(var_operands.get(0)?)?;
-                let prop = self.eval(var_operands.get(1)?)?;
-                let val = self.eval(var_operands.get(2)?)?;
-                self.mem.obj_table_mut().set_prop(Object::from_number(obj), Property::from_number(prop as u8), val)
+                let object = Object::from_number(self.eval(var_operands.get(0)?)?);
+                let property = Property::from_number(self.eval(var_operands.get(1)?)? as u8);
+                let value = self.eval(var_operands.get(2)?)?;
+                if let Some(prop_ref) = self.mem.obj_table().get_prop_ref(object, property)? {
+                    self.mem.obj_table_mut().set_prop(&prop_ref, value)
+                } else {
+                    Err(RuntimeError::PropertyNotFound(object, property))
+                }
             }
             // Instruction::Sread(var_operands) =>
             Instruction::PrintChar(var_operands) => {
