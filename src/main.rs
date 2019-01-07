@@ -27,17 +27,18 @@ impl Platform for ConsolePlatform {
 fn main() {
     let opts = Options::from_args();
 
-    let data = fs::read(&opts.story_file)
+    let story_file = fs::read(&opts.story_file)
         .expect(&format!("could not read game file {:?}", &opts.story_file));
-    let bytes = Bytes::from(data);
-    let mem = Memory::wrap(bytes)
-        .expect(&format!("error in story file {:?}", &opts.story_file));
 
+    // let bytes = Bytes::from(data);
+    // let mem = Memory::wrap(bytes)
+    //     .expect(&format!("error in story file {:?}", &opts.story_file));
     // print!("{:}", mem.obj_table().to_tree_string().unwrap());
 
     let mut platform = ConsolePlatform {};
 
-    let mut z = ZMachine::new(&mut platform, &mut mem);
+    let mut z = ZMachine::new(&mut platform, story_file)
+        .expect(&format!("error in story file {:?}", &opts.story_file));
     loop {
         z.step().unwrap();
     }

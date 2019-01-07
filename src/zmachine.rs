@@ -1,6 +1,6 @@
 use crate::bytes::{Address, Bytes};
 use crate::decoder::InstructionDecoder;
-use crate::errors::RuntimeError;
+use crate::errors::{FormatError, RuntimeError};
 use crate::header;
 use crate::instr::*;
 use crate::mem::Memory;
@@ -17,26 +17,28 @@ const CALL_STACK_SIZE_LIMIT: usize = 0x10000;
 pub struct ZMachine<'a, P> where P: Platform {
     platform: &'a mut P,
     orig_bytes: Bytes,
-    mem: &'a mut Memory<'a>,
+    mem: Memory,
     pc: Address,
     call_stack: Vec<StackFrame>,
 }
 
 impl<'a, P> ZMachine<'a, P> where P: Platform {
-    pub fn new(platform: &'a mut P, mem: &'a mut Memory<'a>) -> ZMachine<'a, P> {
+    pub fn new(platform: &'a mut P, story_file: Vec<u8>) -> Result<ZMachine<'a, P>, FormatError> {
         // 5.5
         // In all other Versions, the word at $06 contains the byte address of the first
         // instruction to execute. The Z-machine starts in an environment with no local variables
         // from which, again, a return is illegal.
+        let bytes = Bytes::from(story_file);
+        let mem = Memory::wrap(bytes.clone())?;
         let mut z = ZMachine {
             platform: platform,
-            orig_bytes: mem.bytes().clone(),
+            orig_bytes: bytes,
             mem: mem,
             pc: Address::from_byte_address(0),
             call_stack: Vec::with_capacity(32),
         };
         z.restart();
-        z
+        Ok(z)
     }
 
     pub fn restart(&mut self) {

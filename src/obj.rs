@@ -3,22 +3,24 @@ use crate::bytes::{Address, Bytes};
 use crate::errors::{FormatError, RuntimeError};
 use crate::version::*;
 use crate::zstring::{AbbreviationsTable, ZString};
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::fmt::{Display, Formatter};
+use std::rc::Rc;
 
 // 12.1
 // The object table is held in dynamic memory and its byte address is stored in the word at $0a in
 // the header.
-pub struct ObjectTable<'a> {
+pub struct ObjectTable {
     version: Version,
-    bytes: &'a mut Bytes,
+    bytes: Rc<RefCell<Bytes>>,
     base_addr: Address,
-    abbrs_table: &'a AbbreviationsTable<'a>,
+    abbrs_table: AbbreviationsTable,
 }
 
-impl<'a> ObjectTable<'a> {
-    pub fn new(version: Version, bytes: &'a mut Bytes, base_addr: Address, abbrs_table: &'a AbbreviationsTable<'a>) -> Result<ObjectTable<'a>, FormatError> {
+impl ObjectTable {
+    pub fn new(version: Version, bytes: Rc<RefCell<Bytes>>, base_addr: Address, abbrs_table: AbbreviationsTable) -> Result<ObjectTable, FormatError> {
         // TODO check that the props default table and obj table are in addr range
         Ok(ObjectTable {
             version: version,
@@ -30,27 +32,27 @@ impl<'a> ObjectTable<'a> {
 
     pub fn get_name(&self, obj: Object) -> Result<String, RuntimeError> {
         let header_addr = self.obj_props_header_addr(obj)?;
-        let text_length = self.bytes.get_u8(header_addr)?;
+        let text_length = self.bytes.borrow().get_u8(header_addr)?;
         let text_addr = header_addr + 1;
         // This one is a bit special because 0-length zstrings are possible. So we construct it
         // from a slice directly, instead of scanning for a terminator word.
-        let zstring = ZString::from(self.bytes.get_slice(text_addr..text_addr + 2 * text_length)?);
-        zstring.decode(self.version, self.abbrs_table)
+        let zstring = ZString::from(self.bytes.borrow().get_slice(text_addr..text_addr + 2 * text_length)?);
+        zstring.decode(self.version, &self.abbrs_table)
     }
 
     pub fn get_parent(&self, obj: Object) -> Result<Object, RuntimeError> {
         obj.check_valid(self.version)?;
-        Ok(Object::from_number(self.bytes.get_u8(self.parent_addr(obj))? as u16))
+        Ok(Object::from_number(self.bytes.borrow().get_u8(self.parent_addr(obj))? as u16))
     }
 
     pub fn get_sibling(&self, obj: Object) -> Result<Object, RuntimeError> {
         obj.check_valid(self.version)?;
-        Ok(Object::from_number(self.bytes.get_u8(self.sibling_addr(obj))? as u16))
+        Ok(Object::from_number(self.bytes.borrow().get_u8(self.sibling_addr(obj))? as u16))
     }
 
     pub fn get_child(&self, obj: Object) -> Result<Object, RuntimeError> {
         obj.check_valid(self.version)?;
-        Ok(Object::from_number(self.bytes.get_u8(self.child_addr(obj))? as u16))
+        Ok(Object::from_number(self.bytes.borrow().get_u8(self.child_addr(obj))? as u16))
     }
 
     pub fn insert_obj(&mut self, obj: Object, dest: Object) -> Result<(), RuntimeError> {
@@ -85,15 +87,15 @@ impl<'a> ObjectTable<'a> {
         obj.check_valid(self.version)?;
         attr.check_valid(self.version)?;
         let (addr, bit) = self.attr_addr(obj, attr)?;
-        Ok(self.bytes.get_u8(addr)?.bit(bit))
+        Ok(self.bytes.borrow().get_u8(addr)?.bit(bit))
     }
 
     pub fn set_attr(&mut self, obj: Object, attr: Attribute, val: bool) -> Result<(), RuntimeError> {
         obj.check_valid(self.version)?;
         attr.check_valid(self.version)?;
         let (addr, bit) = self.attr_addr(obj, attr)?;
-        let byte = self.bytes.get_u8(addr)?.set_bit(bit, val);
-        self.bytes.set_u8(addr, byte)
+        let byte = self.bytes.borrow().get_u8(addr)?.set_bit(bit, val);
+        self.bytes.borrow_mut().set_u8(addr, byte)
     }
 
     pub fn get_prop(&self, obj: Object, prop: Property) -> Result<u16, RuntimeError> {
@@ -101,8 +103,8 @@ impl<'a> ObjectTable<'a> {
         prop.check_valid(self.version)?;
         if let Some((prop_addr, prop_size)) = self.prop_addr(obj, prop)? {
             match prop_size {
-                1 => Ok(self.bytes.get_u8(prop_addr)? as u16),
-                2 => Ok(self.bytes.get_u16(prop_addr)?),
+                1 => Ok(self.bytes.borrow().get_u8(prop_addr)? as u16),
+                2 => Ok(self.bytes.borrow().get_u16(prop_addr)?),
                 _ => Err(RuntimeError::InvalidPropertySize(prop_size))
             }
         } else {
@@ -119,8 +121,8 @@ impl<'a> ObjectTable<'a> {
         if let Some((prop_addr, prop_size)) = self.prop_addr(obj, prop)? {
             match prop_size {
                 // TODO refactor so this goes through a writability check automatically
-                1 => self.bytes.set_u8(prop_addr, val as u8)?,
-                2 => self.bytes.set_u16(prop_addr, val)?,
+                1 => self.bytes.borrow_mut().set_u8(prop_addr, val as u8)?,
+                2 => self.bytes.borrow_mut().set_u16(prop_addr, val)?,
                 _ => return Err(RuntimeError::InvalidPropertySize(prop_size))
             };
             Ok(())
@@ -149,7 +151,7 @@ impl<'a> ObjectTable<'a> {
         // ... The ... property defaults table ... contains 31 words in Versions 1 to 3 and 63 in
         // Versions 4 and later. ...
         let addr = self.base_addr + 2 * prop.index();
-        self.bytes.get_u16(addr)
+        self.bytes.borrow().get_u16(addr)
     }
 
     fn start_addr(&self) -> Address {
@@ -199,7 +201,7 @@ impl<'a> ObjectTable<'a> {
             V1 | V2 | V3 => 7
         };
         Ok(Address::from_byte_address(
-            self.bytes.get_u16(self.obj_addr(obj) + offset)
+            self.bytes.borrow().get_u16(self.obj_addr(obj) + offset)
                 .or(Err(RuntimeError::ObjectCorrupt(obj)))?))
     }
 
@@ -216,13 +218,13 @@ impl<'a> ObjectTable<'a> {
         // where the text-length is the number of 2-byte words making up the text, which is stored
         // in the usual format. 
         let header_addr = self.obj_props_header_addr(obj)?;
-        let text_length = self.bytes.get_u8(header_addr)
+        let text_length = self.bytes.borrow().get_u8(header_addr)
             .or(Err(RuntimeError::ObjectCorrupt(obj)))?;
         Ok(header_addr + 1 + 2 * text_length as usize * 2)
     }
 
     fn prop_addr(&self, obj: Object, prop: Property) -> Result<Option<(Address, u8)>, RuntimeError> {
-        for res in PropertyIterator::new(self.bytes, self.obj_props_addr(obj)?, self.version)? {
+        for res in PropertyIterator::new(&self.bytes.borrow(), self.obj_props_addr(obj)?, self.version)? {
             let (p, addr, size) = res?;
             if p == prop {
                 return Ok(Some((addr, size)));
@@ -242,7 +244,7 @@ impl<'a> ObjectTable<'a> {
             // TODO export V1 etc directly as well
             V1 | V2 | V3 => {
                 let addr = self.parent_addr(obj);
-                self.bytes.set_u8(addr, parent.0 as u8)
+                self.bytes.borrow_mut().set_u8(addr, parent.0 as u8)
             }
         }
     }
@@ -251,7 +253,7 @@ impl<'a> ObjectTable<'a> {
         match self.version {
             V1 | V2 | V3 => {
                 let addr = self.sibling_addr(obj);
-                self.bytes.set_u8(addr, sibling.0 as u8)
+                self.bytes.borrow_mut().set_u8(addr, sibling.0 as u8)
             }
         }
     }
@@ -260,7 +262,7 @@ impl<'a> ObjectTable<'a> {
         match self.version {
             V1 | V2 | V3 => {
                 let addr = self.child_addr(obj);
-                self.bytes.set_u8(addr, child.0 as u8)
+                self.bytes.borrow_mut().set_u8(addr, child.0 as u8)
             }
         }
     }
@@ -457,7 +459,7 @@ impl Attribute {
     }
 }
 
-impl<'a> Display for ObjectTable<'a> {
+impl Display for ObjectTable {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self.guess_num_objects() {
             Ok(n) => {

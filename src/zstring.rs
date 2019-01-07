@@ -2,10 +2,18 @@ use crate::bits::*;
 use crate::bytes::{Address, Bytes};
 use crate::errors::{FormatError, RuntimeError};
 use crate::version::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-pub struct ZString<'a>(&'a[u8]);
+pub struct ZString(Vec<u8>);
 
-impl<'a> ZString<'a> {
+impl From<&[u8]> for ZString {
+    fn from(bytes: &[u8]) -> ZString {
+        ZString(bytes.to_vec())
+    }
+}
+
+impl ZString {
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -19,14 +27,15 @@ impl<'a> ZString<'a> {
     }
 }
 
-pub struct AbbreviationsTable<'a> {
+#[derive(Debug, Clone)]
+pub struct AbbreviationsTable {
     version: Version,
-    bytes: &'a Bytes,
+    bytes: Rc<RefCell<Bytes>>,
     base_addr: Address,
 }
 
-impl<'a> AbbreviationsTable<'a> {
-    pub fn new(version: Version, bytes: &'a Bytes, base_addr: Address) -> Result<AbbreviationsTable<'a>, FormatError> {
+impl AbbreviationsTable {
+    pub fn new(version: Version, bytes: Rc<RefCell<Bytes>>, base_addr: Address) -> Result<AbbreviationsTable, FormatError> {
         // TODO check that the address is in range
         Ok(AbbreviationsTable {
             version: version,
@@ -35,13 +44,13 @@ impl<'a> AbbreviationsTable<'a> {
         })
     }
 
-    pub fn get_zstring(&self, idx: usize) -> Result<ZString<'a>, RuntimeError> {
+    pub fn get_zstring(&self, idx: usize) -> Result<ZString, RuntimeError> {
         // 3.3
         // If z is the first Z-character (1, 2 or 3) and x the subsequent one, then the interpreter
         // must look up entry 32(z-1)+x in the abbreviations table and print the string at that
         // word address.
-        let addr = Address::from_word_address(self.bytes.get_u16(self.base_addr + 2 * idx)?);
-        self.bytes.get_zstring(addr)
+        let addr = Address::from_word_address(self.bytes.borrow().get_u16(self.base_addr + 2 * idx)?);
+        self.bytes.borrow().get_zstring(addr)
     }
 
     fn version(&self) -> Version {
@@ -54,11 +63,11 @@ struct ZChar(u8);
 
 struct ZStringDecoder<'a> {
     version: Version,
-    abbrs_table: Option<&'a AbbreviationsTable<'a>>,
+    abbrs_table: Option<&'a AbbreviationsTable>,
 }
 
 impl<'a> ZStringDecoder<'a> {
-    fn new(version: Version, abbrs_table: Option<&'a AbbreviationsTable<'a>>) -> ZStringDecoder<'a> {
+    fn new(version: Version, abbrs_table: Option<&'a AbbreviationsTable>) -> ZStringDecoder<'a> {
         ZStringDecoder {
             version: version,
             abbrs_table: abbrs_table,
@@ -254,12 +263,6 @@ impl<'a> Iterator for ZCharIterator<'a> {
         let zchar = ZChar(self.chars[self.next_char]);
         self.next_char = (self.next_char + 1) % 3;
         Some(zchar)
-    }
-}
-
-impl<'a> From<&'a[u8]> for ZString<'a> {
-    fn from(bytes: &[u8]) -> ZString {
-        ZString(bytes)
     }
 }
 

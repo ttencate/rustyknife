@@ -2,22 +2,24 @@ use crate::bits::*;
 use crate::bytes::{Address, Bytes};
 use crate::errors::FormatError;
 use crate::version::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-pub struct Header<'a> {
+pub struct Header {
     version: Version,
-    bytes: &'a mut Bytes,
+    bytes: Rc<RefCell<Bytes>>,
 }
 
-impl<'a> Header<'a> {
-    pub fn new(bytes: &'a mut Bytes) -> Result<Header<'a>, FormatError> {
+impl Header {
+    pub fn new(bytes: Rc<RefCell<Bytes>>) -> Result<Header, FormatError> {
         // Header is 64 bytes, so that's the minimum memory size.
-        let size = bytes.len();
+        let size = bytes.borrow().len();
         if size < 64 {
             return Err(FormatError::TooSmall(size));
         }
 
         // Version number (1 to 6)
-        let version = Version::try_from(bytes.get_u8(Address::from_byte_address(0x0000)).unwrap())?;
+        let version = Version::try_from(bytes.borrow().get_u8(Address::from_byte_address(0x0000)).unwrap())?;
 
         // 1.1.4
         // The maximum permitted length of a story file depends on the Version, as follows:
@@ -52,53 +54,53 @@ impl<'a> Header<'a> {
     }
 
     pub fn flag(&self, flag: Flag) -> bool {
-        self.bytes.get_u8(flag.addr()).unwrap().bit(flag.bit())
+        self.bytes.borrow().get_u8(flag.addr()).unwrap().bit(flag.bit())
     }
 
     pub fn set_flag(&mut self, flag: Flag, val: bool) {
         let addr = flag.addr();
-        let byte = self.bytes.get_u8(addr).unwrap();
-        self.bytes.set_u8(addr, byte.set_bit(flag.bit(), val)).unwrap();
+        let byte = self.bytes.borrow().get_u8(addr).unwrap();
+        self.bytes.borrow_mut().set_u8(addr, byte.set_bit(flag.bit(), val)).unwrap();
     }
 
     pub fn static_memory_base(&self) -> Address {
         // Base of static memory (byte address)
-        Address::from_byte_address(self.bytes.get_u16(Address::from_byte_address(0x000e)).unwrap())
+        Address::from_byte_address(self.bytes.borrow().get_u16(Address::from_byte_address(0x000e)).unwrap())
     }
 
     pub fn high_memory_base(&self) -> Address {
         // Base of high memory (byte address)
-        Address::from_byte_address(self.bytes.get_u16(Address::from_byte_address(0x0004)).unwrap())
+        Address::from_byte_address(self.bytes.borrow().get_u16(Address::from_byte_address(0x0004)).unwrap())
     }
 
     pub fn initial_program_counter(&self) -> Address {
         // v1-5: Initial value of program counter (byte address)
         match self.version() {
-            V1 | V2 | V3 => Address::from_byte_address(self.bytes.get_u16(Address::from_byte_address(0x0006)).unwrap()),
+            V1 | V2 | V3 => Address::from_byte_address(self.bytes.borrow().get_u16(Address::from_byte_address(0x0006)).unwrap()),
         }
     }
 
     pub fn globals_table_addr(&self) -> Address {
         // Location of global variables table (byte address)
-        Address::from_byte_address(self.bytes.get_u16(Address::from_byte_address(0x000c)).unwrap())
+        Address::from_byte_address(self.bytes.borrow().get_u16(Address::from_byte_address(0x000c)).unwrap())
     }
 
     pub fn abbrs_table_addr(&self) -> Address {
         // Location of abbreviations table (byte address)
-        Address::from_byte_address(self.bytes.get_u16(Address::from_byte_address(0x0018)).unwrap())
+        Address::from_byte_address(self.bytes.borrow().get_u16(Address::from_byte_address(0x0018)).unwrap())
     }
 
     pub fn obj_table_addr(&self) -> Address {
         // Location of object table (byte address)
-        Address::from_byte_address(self.bytes.get_u16(Address::from_byte_address(0x000a)).unwrap())
+        Address::from_byte_address(self.bytes.borrow().get_u16(Address::from_byte_address(0x000a)).unwrap())
     }
 
     // fn story_size(&self) -> usize {
     //     // Length of file
-    //     let size = self.bytes.get_u16(Address::from_byte_address(0x001a)).unwrap() as usize;
+    //     let size = self.bytes.borrow().get_u16(Address::from_byte_address(0x001a)).unwrap() as usize;
     //     // Some early Version 3 files do not contain length and checksum data, hence the notation 3+.
     //     if size == 0 {
-    //         self.bytes.len()
+    //         self.bytes.borrow().len()
     //     } else {
     //         // 11.1.6
     //         // The file length stored at $1a is actually divided by a constant, depending on the
@@ -112,7 +114,7 @@ impl<'a> Header<'a> {
 
     // fn checksum(&self) -> Option<u16> {
     //     // Checksum of file
-    //     let checksum = self.bytes.get_u16(Address::from_byte_address(0x001c)).unwrap();
+    //     let checksum = self.bytes.borrow().get_u16(Address::from_byte_address(0x001c)).unwrap();
     //     // Some early Version 3 files do not contain length and checksum data, hence the notation 3+.
     //     if checksum == 0 { None } else { Some(checksum) }
     // }

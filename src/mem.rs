@@ -5,23 +5,29 @@ use crate::header::Header;
 use crate::obj::ObjectTable;
 use crate::version::Version;
 use crate::zstring::AbbreviationsTable;
+use std::cell::{Ref, RefCell, RefMut};
+use std::rc::Rc;
 
-pub struct Memory<'a> {
+pub struct Memory {
     version: Version,
-    bytes: &'a mut Bytes,
-    header: Header<'a>,
-    globals_table: GlobalsTable<'a>,
-    obj_table: ObjectTable<'a>,
-    abbrs_table: AbbreviationsTable<'a>,
+    // This needs to be Rc so that all "views" on it can hold references to it (which would
+    // otherwise be forbidden because struct fields can't hold references to other fields in the
+    // same struct). And of course, it needs to be RefCell to provide mutability.
+    bytes: Rc<RefCell<Bytes>>,
+    header: Header,
+    globals_table: GlobalsTable,
+    obj_table: ObjectTable,
+    abbrs_table: AbbreviationsTable,
 }
 
-impl<'a> Memory<'a> {
-    pub fn wrap(bytes: &mut Bytes) -> Result<Memory, FormatError> {
-        let header = Header::new(bytes)?;
+impl Memory {
+    pub fn wrap(bytes: Bytes) -> Result<Memory, FormatError> {
+        let bytes = Rc::new(RefCell::new(bytes));
+        let header = Header::new(bytes.clone())?;
         let version = header.version();
-        let globals_table = GlobalsTable::new(version, bytes, header.globals_table_addr())?;
-        let abbrs_table = AbbreviationsTable::new(version, bytes, header.abbrs_table_addr())?;
-        let obj_table = ObjectTable::new(version, bytes, header.obj_table_addr(), &abbrs_table)?;
+        let globals_table = GlobalsTable::new(version, bytes.clone(), header.globals_table_addr())?;
+        let abbrs_table = AbbreviationsTable::new(version, bytes.clone(), header.abbrs_table_addr())?;
+        let obj_table = ObjectTable::new(version, bytes.clone(), header.obj_table_addr(), abbrs_table.clone())?;
 
         Ok(Memory {
             version: version,
@@ -37,27 +43,27 @@ impl<'a> Memory<'a> {
         self.version
     }
 
+    pub fn bytes(&self) -> Ref<Bytes> {
+        self.bytes.borrow()
+    }
+
+    pub fn bytes_mut(&mut self) -> RefMut<Bytes> {
+        self.bytes.borrow_mut()
+    }
+
     pub fn header(&self) -> &Header {
         &self.header
     }
 
-    pub fn header_mut(&mut self) -> &mut Header<'a> {
+    pub fn header_mut(&mut self) -> &mut Header {
         &mut self.header
-    }
-
-    pub fn bytes(&self) -> &Bytes {
-        &self.bytes
-    }
-
-    pub fn bytes_mut(&mut self) -> &mut Bytes {
-        &mut self.bytes
     }
 
     pub fn globals(&self) -> &GlobalsTable {
         &self.globals_table
     }
 
-    pub fn globals_mut(&mut self) -> &mut GlobalsTable<'a> {
+    pub fn globals_mut(&mut self) -> &mut GlobalsTable {
         &mut self.globals_table
     }
 
@@ -69,7 +75,7 @@ impl<'a> Memory<'a> {
         &self.obj_table
     }
 
-    pub fn obj_table_mut(&mut self) -> &mut ObjectTable<'a> {
+    pub fn obj_table_mut(&mut self) -> &mut ObjectTable {
         &mut self.obj_table
     }
 }

@@ -6,13 +6,13 @@ use crate::mem::*;
 use crate::version::*;
 
 pub struct InstructionDecoder<'a> {
-    mem: &'a Memory<'a>,
+    mem: &'a Memory,
     start_addr: Address,
     next_addr: Address,
 }
 
 impl<'a> InstructionDecoder<'a> {
-    pub fn new(mem: &'a Memory<'a>, pc: Address) -> InstructionDecoder<'a> {
+    pub fn new(mem: &'a Memory, pc: Address) -> InstructionDecoder<'a> {
         InstructionDecoder {
             mem: mem,
             start_addr: pc,
