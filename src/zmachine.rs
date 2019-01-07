@@ -96,7 +96,8 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // dec_chk
                 // 2OP:4 4 dec_chk (variable) value ?(label)
                 // Decrement variable, and branch if it is now less than the given value.
-                let variable = self.variable(self.eval(var_operands.get(0)?)?)?;
+                let variable = self.eval(var_operands.get(0)?)?;
+                let variable = self.variable(variable)?;
                 let value = self.eval(var_operands.get(1)?)? as i16;
                 let new_val = self.eval_var(variable)?.wrapping_sub(1) as i16;
                 self.store(variable, new_val as u16)?;
@@ -106,7 +107,8 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // inc_chk
                 // 2OP:5 5 inc_chk (variable) value ?(label)
                 // Increment variable, and branch if now greater than value.
-                let variable = self.variable(self.eval(var_operands.get(0)?)?)?;
+                let variable = self.eval(var_operands.get(0)?)?;
+                let variable = self.variable(variable)?;
                 let value = self.eval(var_operands.get(1)?)? as i16;
                 let new_val = self.eval_var(variable)?.wrapping_add(1) as i16;
                 self.store(variable, new_val as u16)?;
@@ -160,7 +162,8 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // store
                 // 2OP:13 D store (variable) value
                 // Set the VARiable referenced by the operand to value.
-                let variable = self.variable(self.eval(var_operands.get(0)?)?)?;
+                let variable = self.eval(var_operands.get(0)?)?;
+                let variable = self.variable(variable)?;
                 let value = self.eval(var_operands.get(1)?)?;
                 self.store(variable, value)
             }
@@ -264,7 +267,8 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // jz
                 // 1OP:128 0 jz a ?(label)
                 // Jump if a = 0.
-                self.cond_branch(self.eval(operand)? == 0, branch)
+                let a = self.eval(operand)?;
+                self.cond_branch(a == 0, branch)
             }
             // Instruction::GetSibling(operand, store, branch) =>
             // Instruction::GetChild(operand, store, branch) =>
@@ -281,7 +285,8 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // inc
                 // 1OP:133 5 inc (variable)
                 // Increment variable by 1. (This is signed, so -1 increments to 0.)
-                let variable = self.variable(self.eval(operand)?)?;
+                let variable = self.eval(operand)?;
+                let variable = self.variable(variable)?;
                 let new_val = self.eval_var(variable)?.wrapping_add(1);
                 self.store(variable, new_val)
             }
@@ -289,7 +294,8 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // dec
                 // 1OP:134 6 dec (variable)
                 // Decrement variable by 1. This is signed, so 0 decrements to -1.
-                let variable = self.variable(self.eval(operand)?)?;
+                let variable = self.eval(operand)?;
+                let variable = self.variable(variable)?;
                 let new_val = self.eval_var(variable)?.wrapping_sub(1);
                 self.store(variable, new_val)
             }
@@ -310,7 +316,8 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // ret
                 // 1OP:139 B ret value
                 // Returns from the current routine with the value given.
-                self.ret(self.eval(operand)?)
+                let value = self.eval(operand)?;
+                self.ret(value)
             }
             Instruction::Jump(operand) => {
                 // jump
@@ -325,7 +332,8 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // The destination of the jump opcode is:
                 // Address after instruction + Offset - 2
                 // This is analogous to the calculation for branch offsets.
-                self.pc += (self.eval(operand)? as i16 - 2) as i32;
+                let offset = self.eval(operand)? as i16;
+                self.pc += (offset - 2) as i32;
                 Ok(())
             }
             Instruction::PrintPaddr(operand) => {
@@ -343,7 +351,8 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // 1OP:142 E load (variable) -> (result)
                 // The value of the variable referred to by the operand is stored in the result.
                 // (Inform doesn't use this; see the notes to S 14.)
-                let variable = self.variable(self.eval(operand)?)?;
+                let variable = self.eval(operand)?;
+                let variable = self.variable(variable)?;
                 let value = self.eval_var(variable)?;
                 self.store(store, value)
             }
@@ -482,7 +491,8 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Pulls value off a stack. (If the stack underflows, the interpreter should halt
                 // with a suitable error message.) In Version 6, the stack in question may be
                 // specified as a user one: otherwise it is the game stack.
-                let variable = self.variable(self.eval(var_operands.get(0)?)?)?;
+                let variable = self.eval(var_operands.get(0)?)?;
+                let variable = self.variable(variable)?;
                 let value = self.frame_mut().pull()?;
                 self.store(variable, value)
             }
@@ -595,20 +605,19 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         }
     }
 
-    fn eval(&self, operand: Operand) -> Result<u16, RuntimeError> {
+    fn eval(&mut self, operand: Operand) -> Result<u16, RuntimeError> {
         match operand {
             Operand::LargeConstant(c) => Ok(c),
             Operand::SmallConstant(c) => Ok(c as u16),
-            Operand::Variable(var) => match var {
-                Variable::TopOfStack => self.frame().stack_top(),
-                Variable::Local(local) => self.frame().local(local),
-                Variable::Global(global) => self.mem.globals().get(global),
-            }
+            Operand::Variable(var) => self.eval_var(var),
         }
     }
 
     fn eval_var(&mut self, var: Variable) -> Result<u16, RuntimeError> {
         match var {
+            // 6.3
+            // Writing to the stack pointer (variable number $00) pushes a value onto the stack;
+            // reading from it pulls a value off.
             Variable::TopOfStack => self.frame_mut().pull(),
             Variable::Local(local) => self.frame().local(local),
             Variable::Global(global) => self.mem.globals().get(global),
@@ -735,10 +744,6 @@ impl StackFrame {
             return_addr: return_addr,
         };
         Ok((frame, addr))
-    }
-
-    fn stack_top(&self) -> Result<u16, RuntimeError> {
-        Ok(*self.stack.last().ok_or(RuntimeError::StackEmpty)?)
     }
 
     fn push(&mut self, value: u16) -> Result<(), RuntimeError> {
