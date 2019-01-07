@@ -211,7 +211,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 self.store(store, parent.number())
             }
             // Instruction::GetPropLen(operand, store) =>
-            // Instruction::Inc(operand) =>
+            Instruction::Inc(operand) => {
+                // inc
+                // 1OP:133 5 inc (variable)
+                // Increment variable by 1. (This is signed, so -1 increments to 0.)
+                let variable = self.variable(self.eval(operand)?)?;
+                let new_val = self.eval_var(variable)?.wrapping_add(1);
+                self.store(variable, new_val)
+            }
             // Instruction::Dec(operand) =>
             // Instruction::PrintAddr(operand) =>
             // Instruction::RemoveObj(operand) =>
