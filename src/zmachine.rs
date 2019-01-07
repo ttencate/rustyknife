@@ -77,7 +77,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 self.cond_branch(cond, branch)
             }
             // Instruction::Jl(var_operands, branch) =>
-            // Instruction::Jg(var_operands, branch) =>
+            Instruction::Jg(var_operands, branch) => {
+                // jg
+                // 2OP:3 3 jg a b ?(label)
+                // Jump if a > b (using a signed 16-bit comparison).
+                let a = self.eval(var_operands.get(0)?)? as i16;
+                let b = self.eval(var_operands.get(1)?)? as i16;
+                self.cond_branch(a > b, branch)
+            }
             // Instruction::DecChk(var_operands, branch) =>
             Instruction::IncChk(var_operands, branch) => {
                 // inc_chk
