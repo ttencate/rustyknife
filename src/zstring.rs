@@ -141,6 +141,9 @@ impl<'a> ZStringDecoder<'a> {
                             }
                         }
                     }
+                    if self.version >= V3 {
+                        cur_alphabet = Alphabet::A0;
+                    }
                 }
 
                 // 3.5.1
