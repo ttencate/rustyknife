@@ -5,9 +5,9 @@ use rustyknife::*;
 use std::fs;
 
 #[test]
-fn test_zork1() {
+fn test_czech() {
     let mut platform = TestPlatform::new();
-    let data = fs::read("tests/zork1/zork1.z3").unwrap();
+    let data = fs::read("tests/czech/czech.z3").unwrap();
     let mut z = ZMachine::new(&mut platform, data).unwrap();
     loop {
         z.step().unwrap();
