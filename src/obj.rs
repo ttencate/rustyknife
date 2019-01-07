@@ -36,7 +36,7 @@ impl ObjectTable {
         let text_addr = header_addr + 1;
         // This one is a bit special because 0-length zstrings are possible. So we construct it
         // from a slice directly, instead of scanning for a terminator word.
-        let zstring = ZString::from(self.bytes.borrow().get_slice(text_addr..text_addr + 2 * text_length)?);
+        let zstring = ZString::from(self.bytes.borrow().get_slice(text_addr..text_addr + 2 * text_length as usize)?);
         zstring.decode(self.version, &self.abbrs_table)
     }
 
