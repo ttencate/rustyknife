@@ -305,7 +305,13 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
             // Instruction::Restore(branch) =>
             // Instruction::Restart() =>
             // Instruction::RetPopped() =>
-            // Instruction::Pop() =>
+            Instruction::Pop() => {
+                // pop
+                // 0OP:185 9 1 pop
+                // Throws away the top item on the stack. (This was useful to lose unwanted routine
+                // call results in early Versions.)
+                self.frame_mut().pull().and(Ok(()))
+            }
             // Instruction::Quit() =>
             Instruction::NewLine() => {
                 self.platform.print("\n");
