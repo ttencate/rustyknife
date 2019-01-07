@@ -363,7 +363,12 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Return true (i.e., 1) from the current routine.
                 self.ret(1)
             }
-            // Instruction::Rfalse() =>
+            Instruction::Rfalse() => {
+                // rfalse
+                // 0OP:177 1 rfalse
+                // Return false (i.e., 0) from the current routine.
+                self.ret(0)
+            }
             Instruction::Print(string) => {
                 self.platform.print(&string);
                 Ok(())
@@ -373,7 +378,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
             // Instruction::Save(branch) =>
             // Instruction::Restore(branch) =>
             // Instruction::Restart() =>
-            // Instruction::RetPopped() =>
+            Instruction::RetPopped() => {
+                // ret_popped
+                // 0OP:184 8 ret_popped
+                // Pops top of stack and returns that. (This is equivalent to ret sp, but is one
+                // byte cheaper.)
+                let value = self.frame_mut().pull()?;
+                self.ret(value)
+            }
             Instruction::Pop() => {
                 // pop
                 // 0OP:185 9 1 pop
