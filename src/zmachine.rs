@@ -286,7 +286,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 self.platform.print(&string);
                 Ok(())
             }
-            // Instruction::Load(operand, store) =>
+            Instruction::Load(operand, store) => {
+                // load
+                // 1OP:142 E load (variable) -> (result)
+                // The value of the variable referred to by the operand is stored in the result.
+                // (Inform doesn't use this; see the notes to S 14.)
+                let variable = self.variable(self.eval(operand)?)?;
+                self.store(store, self.eval_var(variable)?)
+            }
             // Instruction::Not(operand, store) =>
             Instruction::Rtrue() => {
                 // rtrue
