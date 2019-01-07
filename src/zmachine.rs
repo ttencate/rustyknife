@@ -337,7 +337,8 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // The value of the variable referred to by the operand is stored in the result.
                 // (Inform doesn't use this; see the notes to S 14.)
                 let variable = self.variable(self.eval(operand)?)?;
-                self.store(store, self.eval_var(variable)?)
+                let value = self.eval_var(variable)?;
+                self.store(store, value)
             }
             // Instruction::Not(operand, store) =>
             Instruction::Rtrue() => {
@@ -561,13 +562,17 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         match operand {
             Operand::LargeConstant(c) => Ok(c),
             Operand::SmallConstant(c) => Ok(c as u16),
-            Operand::Variable(var) => self.eval_var(var),
+            Operand::Variable(var) => match var {
+                Variable::TopOfStack => self.frame().stack_top(),
+                Variable::Local(local) => self.frame().local(local),
+                Variable::Global(global) => self.mem.globals().get(global),
+            }
         }
     }
 
-    fn eval_var(&self, var: Variable) -> Result<u16, RuntimeError> {
+    fn eval_var(&mut self, var: Variable) -> Result<u16, RuntimeError> {
         match var {
-            Variable::TopOfStack => self.frame().stack_top(),
+            Variable::TopOfStack => self.frame_mut().pull(),
             Variable::Local(local) => self.frame().local(local),
             Variable::Global(global) => self.mem.globals().get(global),
         }
