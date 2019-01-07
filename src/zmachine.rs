@@ -221,9 +221,38 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let b = self.eval(var_operands.get(1)?)?;
                 self.store(store, a.wrapping_sub(b))
             }
-            // Instruction::Mul(left, right, store) =>
-            // Instruction::Div(left, right, store) =>
-            // Instruction::Mod(left, right, store) =>
+            Instruction::Mul(var_operands, store) => {
+                // mul
+                // 2OP:22 16 mul a b -> (result)
+                // Signed 16-bit multiplication.
+                let a = self.eval(var_operands.get(0)?)? as i16;
+                let b = self.eval(var_operands.get(1)?)? as i16;
+                self.store(store, a.wrapping_mul(b) as u16)
+            }
+            Instruction::Div(var_operands, store) => {
+                // div
+                // 2OP:23 17 div a b -> (result)
+                // Signed 16-bit division. Division by zero should halt the interpreter with a
+                // suitable error message.
+                let a = self.eval(var_operands.get(0)?)? as i16;
+                let b = self.eval(var_operands.get(1)?)? as i16;
+                if b == 0 {
+                    return Err(RuntimeError::DivisionByZero);
+                }
+                self.store(store, a.wrapping_div(b) as u16)
+            }
+            Instruction::Mod(var_operands, store) => {
+                // mod
+                // 2OP:24 18 mod a b -> (result)
+                // Remainder after signed 16-bit division. Division by zero should halt the
+                // interpreter with a suitable error message.
+                let a = self.eval(var_operands.get(0)?)? as i16;
+                let b = self.eval(var_operands.get(1)?)? as i16;
+                if b == 0 {
+                    return Err(RuntimeError::DivisionByZero);
+                }
+                self.store(store, a.wrapping_rem(b) as u16)
+            }
             Instruction::Jz(operand, branch) => {
                 // jz
                 // 1OP:128 0 jz a ?(label)

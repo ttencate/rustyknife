@@ -100,6 +100,9 @@ quick_error! {
         InvalidCharacterCode(char_code: u16) {
             display("attempt to decode invalid ZSCII character code {}", char_code)
         }
+        DivisionByZero {
+            display("division by zero")
+        }
     }
 }
 
