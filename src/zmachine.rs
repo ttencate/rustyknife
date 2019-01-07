@@ -122,7 +122,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 self.cond_branch(parent_of_a == b, branch)
             }
             // Instruction::Test(var_operands, branch) =>
-            // Instruction::Or(var_operands, store) =>
+            Instruction::Or(var_operands, store) => {
+                // or
+                // 2OP:8 8 or a b -> (result)
+                // Bitwise OR.
+                let a = self.eval(var_operands.get(0)?)?;
+                let b = self.eval(var_operands.get(1)?)?;
+                self.store(store, a | b)
+            }
             Instruction::And(var_operands, store) => {
                 // and
                 // 2OP:9 9 and a b -> (result)
@@ -340,7 +347,16 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let value = self.eval_var(variable)?;
                 self.store(store, value)
             }
-            // Instruction::Not(operand, store) =>
+            Instruction::Not(operand, store) => {
+                // not
+                // 1OP:143 F 1/4 not value -> (result)
+                // VAR:248 18 5/6 not value -> (result)
+                // Bitwise NOT (i.e., all 16 bits reversed). Note that in Versions 3 and 4 this is
+                // a 1OP instruction, reasonably since it has 1 operand, but in later Versions it
+                // was moved into the extended set to make room for call_1n.
+                let value = self.eval(operand)?;
+                self.store(store, !value)
+            }
             Instruction::Rtrue() => {
                 // rtrue
                 // 0OP:176 0 rtrue
