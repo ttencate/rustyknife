@@ -92,7 +92,16 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let b = self.eval(var_operands.get(1)?)? as i16;
                 self.cond_branch(a > b, branch)
             }
-            // Instruction::DecChk(var_operands, branch) =>
+            Instruction::DecChk(var_operands, branch) => {
+                // dec_chk
+                // 2OP:4 4 dec_chk (variable) value ?(label)
+                // Decrement variable, and branch if it is now less than the given value.
+                let variable = self.variable(self.eval(var_operands.get(0)?)?)?;
+                let value = self.eval(var_operands.get(1)?)?;
+                let new_val = self.eval_var(variable)?.wrapping_sub(1);
+                self.store(variable, new_val)?;
+                self.cond_branch(new_val < value, branch)
+            }
             Instruction::IncChk(var_operands, branch) => {
                 // inc_chk
                 // 2OP:5 5 inc_chk (variable) value ?(label)
@@ -240,7 +249,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let new_val = self.eval_var(variable)?.wrapping_add(1);
                 self.store(variable, new_val)
             }
-            // Instruction::Dec(operand) =>
+            Instruction::Dec(operand) => {
+                // dec
+                // 1OP:134 6 dec (variable)
+                // Decrement variable by 1. This is signed, so 0 decrements to -1.
+                let variable = self.variable(self.eval(operand)?)?;
+                let new_val = self.eval_var(variable)?.wrapping_sub(1);
+                self.store(variable, new_val)
+            }
             // Instruction::PrintAddr(operand) =>
             // Instruction::RemoveObj(operand) =>
             Instruction::PrintObj(operand) => {
