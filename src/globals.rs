@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct GlobalsTable {
-    version: Version,
+    _version: Version,
     bytes: Rc<RefCell<Bytes>>,
     base_addr: Address,
 }
@@ -17,9 +17,9 @@ impl GlobalsTable {
         // never used. But more likely, this is a bug somewhere.
         bytes.borrow().get_u16(base_addr).or(Err(FormatError::GlobalsTableOutOfRange(base_addr)))?;
         Ok(GlobalsTable {
-            version,
-            bytes,
-            base_addr,
+            _version: version,
+            bytes: bytes,
+            base_addr: base_addr,
         })
     }
 

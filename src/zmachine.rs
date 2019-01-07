@@ -248,7 +248,16 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 self.pc += (self.eval(operand)? as i16 - 2) as i32;
                 Ok(())
             }
-            // Instruction::PrintPaddr(operand) =>
+            Instruction::PrintPaddr(operand) => {
+                // print_paddr
+                // 1OP:141 D print_paddr packed-address-of-string
+                // Print the (Z-encoded) string at the given packed address in high memory.
+                let addr = Address::from_packed_address(self.eval(operand)?, self.version());
+                let zstring = self.mem.bytes().get_zstring(addr)?;
+                let string = zstring.decode(self.version(), &self.mem.abbrs_table())?;
+                self.platform.print(&string);
+                Ok(())
+            }
             // Instruction::Load(operand, store) =>
             // Instruction::Not(operand, store) =>
             Instruction::Rtrue() => {

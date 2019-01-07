@@ -22,6 +22,7 @@ impl ZString {
         self.0.len() * 3 / 2
     }
 
+    // TODO make this a method on AbbreviationsTable instead?
     pub fn decode(&self, version: Version, abbrs_table: &AbbreviationsTable) -> Result<String, RuntimeError> {
         ZStringDecoder::new(version, Some(abbrs_table)).decode(self)
     }
@@ -51,10 +52,6 @@ impl AbbreviationsTable {
         // word address.
         let addr = Address::from_word_address(self.bytes.borrow().get_u16(self.base_addr + 2 * idx)?);
         self.bytes.borrow().get_zstring(addr)
-    }
-
-    fn version(&self) -> Version {
-        self.version
     }
 }
 
