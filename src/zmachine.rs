@@ -270,8 +270,25 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let a = self.eval(operand)?;
                 self.cond_branch(a == 0, branch)
             }
-            // Instruction::GetSibling(operand, store, branch) =>
-            // Instruction::GetChild(operand, store, branch) =>
+            Instruction::GetSibling(operand, store, branch) => {
+                // get_sibling
+                // 1OP:129 1 get_sibling object -> (result) ?(label)
+                // Get next object in tree, branching if this exists, i.e. is not 0.
+                let object = Object::from_number(self.eval(operand)?);
+                let sibling = self.mem.obj_table().get_sibling(object)?;
+                self.store(store, sibling.number())?;
+                self.cond_branch(!sibling.is_null(), branch)
+            }
+            Instruction::GetChild(operand, store, branch) => {
+                // get_child
+                // 1OP:130 2 get_child object -> (result) ?(label)
+                // Get first object contained in given object, branching if this exists, i.e. is
+                // not nothing (i.e., is not 0).
+                let object = Object::from_number(self.eval(operand)?);
+                let child = self.mem.obj_table().get_child(object)?;
+                self.store(store, child.number())?;
+                self.cond_branch(!child.is_null(), branch)
+            }
             Instruction::GetParent(operand, store) => {
                 // get_parent
                 // 1OP:131 3 get_parent object -> (result)

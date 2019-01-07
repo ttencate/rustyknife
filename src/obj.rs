@@ -322,12 +322,12 @@ impl Object {
         self.0
     }
 
-    fn index(self) -> usize {
-        self.0 as usize - 1
+    pub fn is_null(self) -> bool {
+        self.0 == 0
     }
 
-    fn is_null(self) -> bool {
-        self.0 == 0
+    fn index(self) -> usize {
+        self.0 as usize - 1
     }
 
     fn check_valid(self, version: Version) -> Result<(), RuntimeError> {
