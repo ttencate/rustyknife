@@ -8,19 +8,23 @@ quick_error! {
     #[derive(Debug)]
     pub enum FormatError {
         TooSmall(size: usize) {
-            display("story file is too small ({:} bytes)", size)
+            display("story file is too small ({} bytes)", size)
         }
         TooBig(size: usize, max_size: usize) {
-            display("story file is too big ({:} > {:} bytes)", size, max_size)
+            display("story file is too big ({} > {} bytes)", size, max_size)
         }
         MemoryOverlap(static_memory_base: Address, high_memory_base: Address) {
-            display("high memory may not overlap with dynamic memory: {:} < {:}", static_memory_base, high_memory_base)
+            display("high memory may not overlap with dynamic memory: {} < {}", static_memory_base, high_memory_base)
         }
         GlobalsTableOutOfRange(globals_table: Address) {
-            display("globals table is outside memory: {:}", globals_table)
+            display("globals table is outside memory: {}", globals_table)
         }
         UnsupportedVersion(version_byte: u8) {
-            display("story file has version {:} which is unsupported", version_byte)
+            display("story file has version {} which is unsupported", version_byte)
+        }
+        InvalidFileLength(file_length: usize, num_bytes: usize) {
+            display("file length {} indicated in header is more than number of bytes {} in the file",
+                    file_length, num_bytes)
         }
     }
 }

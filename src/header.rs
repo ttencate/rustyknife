@@ -8,6 +8,7 @@ use std::rc::Rc;
 pub struct Header {
     version: Version,
     bytes: Rc<RefCell<Bytes>>,
+    actual_checksum: u16,
 }
 
 impl Header {
@@ -32,10 +33,12 @@ impl Header {
             return Err(FormatError::TooBig(size, max_size));
         }
 
-        let header = Header {
-            version,
-            bytes,
+        let mut header = Header {
+            version: version,
+            bytes: bytes,
+            actual_checksum: 0,
         };
+        header.actual_checksum = header.compute_checksum()?;
 
         // High memory begins at the "high memory mark" (the byte address stored in the word at $04
         // in the header) and continues to the end of the story file. The bottom of high memory may
@@ -95,29 +98,64 @@ impl Header {
         Address::from_byte_address(self.bytes.borrow().get_u16(Address::from_byte_address(0x000a)).unwrap())
     }
 
-    // fn story_size(&self) -> usize {
-    //     // Length of file
-    //     let size = self.bytes.borrow().get_u16(Address::from_byte_address(0x001a)).unwrap() as usize;
-    //     // Some early Version 3 files do not contain length and checksum data, hence the notation 3+.
-    //     if size == 0 {
-    //         self.bytes.borrow().len()
-    //     } else {
-    //         // 11.1.6
-    //         // The file length stored at $1a is actually divided by a constant, depending on the
-    //         // Version, to make it fit into a header word. This constant is 2 for Versions 1 to 3,
-    //         // 4 for Versions 4 to 5 or 8 for Versions 6 and later.
-    //         size * match self.version() {
-    //             V1 | V2 | V3 => 2
-    //         }
-    //     }
-    // }
+    fn file_length(&self) -> Result<usize, FormatError> {
+        // Length of file
+        let size = self.bytes.borrow().get_u16(Address::from_byte_address(0x001a)).unwrap() as usize;
+        let num_bytes = self.bytes.borrow().len();
+        // Some early Version 3 files do not contain length and checksum data, hence the notation 3+.
+        if size == 0 {
+            Ok(num_bytes)
+        } else {
+            // 11.1.6
+            // The file length stored at $1a is actually divided by a constant, depending on the
+            // Version, to make it fit into a header word. This constant is 2 for Versions 1 to 3,
+            // 4 for Versions 4 to 5 or 8 for Versions 6 and later.
+            let factor = match self.version() {
+                V1 | V2 | V3 => 2
+            };
+            let file_length = factor * size;
+            // It is legal to have more bytes than file_length indicates, but not less.
+            if file_length > num_bytes {
+                Err(FormatError::InvalidFileLength(file_length, num_bytes))
+            } else {
+                Ok(file_length)
+            }
+        }
+    }
 
-    // fn checksum(&self) -> Option<u16> {
-    //     // Checksum of file
-    //     let checksum = self.bytes.borrow().get_u16(Address::from_byte_address(0x001c)).unwrap();
-    //     // Some early Version 3 files do not contain length and checksum data, hence the notation 3+.
-    //     if checksum == 0 { None } else { Some(checksum) }
-    // }
+    pub fn stored_checksum(&self) -> Option<u16> {
+        // Checksum of file
+        let checksum = self.bytes.borrow().get_u16(Address::from_byte_address(0x001c)).unwrap();
+        // Some early Version 3 files do not contain length and checksum data, hence the notation 3+.
+        if checksum == 0 { None } else { Some(checksum) }
+    }
+
+    pub fn actual_checksum(&self) -> u16 {
+        self.actual_checksum
+    }
+
+    pub fn compute_checksum(&self) -> Result<u16, FormatError> {
+        // Verification counts a (two byte, unsigned) checksum of the file from $0040 onwards (by
+        // taking the sum of the values of each byte in the file, modulo $10000) and compares this
+        // against the value in the game header, branching if the two values agree. (Early Version
+        // 3 games do not have the necessary checksums to make this possible.)
+        //
+        // The interpreter must stop calculating when the file length (as given in the header) is
+        // reached. It is legal for the file to contain more bytes than this, but if so the extra
+        // bytes should all be 0. (Some story files are padded out to an exact number of
+        // virtual-memory pages.) However, many Infocom story files in fact contain non-zero data
+        // in the padding, so interpreters must be sure to exclude the padding from checksum
+        // calculations.
+        let bytes = self.bytes.borrow();
+        let slice = bytes
+            .get_slice(Address::from_byte_address(0x0040)..Address::from_index(self.file_length()?))
+            .unwrap(); // Unwrap is safe because the file length has been verified.
+        let mut checksum: u16 = 0;
+        for &byte in slice {
+            checksum = checksum.wrapping_add(byte as u16);
+        }
+        Ok(checksum)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

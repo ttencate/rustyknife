@@ -103,6 +103,10 @@ impl Address {
         Address(0)
     }
 
+    pub const fn from_index(idx: usize) -> Address {
+        Address(idx)
+    }
+
     pub const fn from_byte_address(addr: u16) -> Address {
         // 1.2.1
         // A byte address specifies a byte in memory in the range 0 up to the last byte of static

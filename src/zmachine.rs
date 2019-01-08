@@ -511,7 +511,27 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 Ok(())
             }
             // Instruction::ShowStatus() =>
-            // Instruction::Verify(branch) =>
+            Instruction::Verify(branch) => {
+                // verify
+                // 0OP:189 D 3 verify ?(label)
+                // Verification counts a (two byte, unsigned) checksum of the file from $0040
+                // onwards (by taking the sum of the values of each byte in the file, modulo
+                // $10000) and compares this against the value in the game header, branching if the
+                // two values agree. (Early Version 3 games do not have the necessary checksums to
+                // make this possible.)
+                // The interpreter must stop calculating when the file length (as given in the
+                // header) is reached. It is legal for the file to contain more bytes than this,
+                // but if so the extra bytes should all be 0. (Some story files are padded out to
+                // an exact number of virtual-memory pages.) However, many Infocom story files in
+                // fact contain non-zero data in the padding, so interpreters must be sure to
+                // exclude the padding from checksum calculations.
+                let expected_checksum = self.mem.header().stored_checksum();
+                let cond = match expected_checksum {
+                    Some(expected_checksum) => expected_checksum == self.mem.header().actual_checksum(),
+                    None => true,
+                };
+                self.cond_branch(cond, branch)
+            }
             Instruction::Call(var_operands, store) => {
                 // call
                 // VAR:224 0 1 call routine ...up to 3 args... -> (result)
