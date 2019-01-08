@@ -385,7 +385,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 self.store(variable, new_val)
             }
             // Instruction::PrintAddr(operand) =>
-            // Instruction::RemoveObj(operand) =>
+            Instruction::RemoveObj(operand) => {
+                // remove_obj
+                // 1OP:137 9 remove_obj object
+                // Detach the object from its parent, so that it no longer has any parent. (Its
+                // children remain in its possession.)
+                let obj = Object::from_number(self.eval(operand)?);
+                self.mem.obj_table_mut().remove_obj(obj)
+            }
             Instruction::PrintObj(operand) => {
                 // print_obj
                 // 1OP:138 A print_obj object

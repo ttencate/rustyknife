@@ -62,9 +62,23 @@ impl ObjectTable {
         // tree; it may legally have parent zero.)
         obj.check_valid(self.version)?;
         dest.check_valid(self.version)?;
-        let prev_parent = self.get_parent(obj)?;
-        if !prev_parent.is_null() {
-            let mut prev_sibling = self.get_child(prev_parent)?;
+
+        self.remove_obj(obj)?;
+
+        self.set_parent(obj, dest)?;
+        self.set_sibling(obj, self.get_child(dest)?)?;
+        self.set_child(dest, obj)?;
+        Ok(())
+    }
+
+    pub fn remove_obj(&mut self, obj: Object) -> Result<(), RuntimeError> {
+        // Detach the object from its parent, so that it no longer has any parent. (Its children
+        // remain in its possession.)
+        obj.check_valid(self.version)?;
+
+        let parent = self.get_parent(obj)?;
+        if !parent.is_null() {
+            let mut prev_sibling = self.get_child(parent)?;
             while !prev_sibling.is_null() {
                 let next = self.get_sibling(prev_sibling)?;
                 if next == obj {
@@ -73,13 +87,11 @@ impl ObjectTable {
                 }
                 prev_sibling = next;
             }
-            if self.get_child(prev_parent)? == obj {
-                self.set_child(prev_parent, self.get_sibling(obj)?)?;
+            if self.get_child(parent)? == obj {
+                self.set_child(parent, self.get_sibling(obj)?)?;
             }
+            self.set_parent(obj, Object::null())?;
         }
-        self.set_parent(obj, dest)?;
-        self.set_sibling(obj, self.get_child(dest)?)?;
-        self.set_child(dest, obj)?;
         Ok(())
     }
 
@@ -307,6 +319,10 @@ impl ObjectTable {
 pub struct Object(u16);
 
 impl Object {
+    fn null() -> Object {
+        Object(0)
+    }
+
     pub fn from_number(num: u16) -> Object {
         Object(num)
     }
