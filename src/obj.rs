@@ -123,7 +123,7 @@ impl ObjectTable {
     }
 
     pub fn iter_props(&self, obj: Object) -> Result<PropertyIterator, RuntimeError> {
-        PropertyIterator::new(self.bytes.clone(), self.obj_props_addr(obj)?, self.version)
+        PropertyIterator::new(self.version, self.bytes.clone(), self.obj_props_addr(obj)?)
     }
 
     pub fn get_prop_default(&self, prop: Property) -> Result<u16, RuntimeError> {
@@ -372,6 +372,36 @@ pub struct PropertyRef {
 }
 
 impl PropertyRef {
+    fn new(version: Version, bytes: Rc<RefCell<Bytes>>, addr: Address) -> Result<Option<PropertyRef>, RuntimeError> {
+        // In Versions 1 to 3, each property is stored as a block
+        //
+        //    size byte     the actual property data
+        //                 ---between 1 and 8 bytes--
+        //
+        // where the size byte is arranged as 32 times the number of data bytes minus one, plus the
+        // property number. A property list is terminated by a size byte of 0. (It is otherwise
+        // illegal for a size byte to be a multiple of 32.)
+        match version {
+            V1 | V2 | V3 => {
+                let size_byte = bytes.borrow().get_u8(addr)?;
+                if size_byte == 0 {
+                    Ok(None)
+                } else {
+                    let prop_num = size_byte.bits(BIT0..=BIT4);
+                    let len = size_byte.bits(BIT5..=BIT7) + 1;
+                    let prop = Property::from_number(prop_num);
+                    Ok(Some(PropertyRef {
+                        version: version,
+                        bytes: bytes,
+                        prop: prop,
+                        addr: addr,
+                        len: len,
+                    }))
+                }
+            }
+        }
+    }
+
     pub fn prop(&self) -> Property {
         self.prop
     }
@@ -403,16 +433,16 @@ impl PropertyRef {
 }
 
 pub struct PropertyIterator {
-    bytes: Rc<RefCell<Bytes>>,
     version: Version,
+    bytes: Rc<RefCell<Bytes>>,
     next_addr: Address,
 }
 
 impl PropertyIterator {
-    fn new(bytes: Rc<RefCell<Bytes>>, props_addr: Address, version: Version) -> Result<PropertyIterator, RuntimeError> {
+    fn new(version: Version, bytes: Rc<RefCell<Bytes>>, props_addr: Address) -> Result<PropertyIterator, RuntimeError> {
         Ok(PropertyIterator {
-            bytes: bytes,
             version: version,
+            bytes: bytes,
             next_addr: props_addr,
         })
     }
@@ -420,40 +450,17 @@ impl PropertyIterator {
 
 impl Iterator for PropertyIterator {
     type Item = Result<PropertyRef, RuntimeError>;
-    fn next(&mut self) -> Option<Self::Item> {
-        // In Versions 1 to 3, each property is stored as a block
-        //
-        //    size byte     the actual property data
-        //                 ---between 1 and 8 bytes--
-        //
-        // where the size byte is arranged as 32 times the number of data bytes minus one, plus the
-        // property number. A property list is terminated by a size byte of 0. (It is otherwise
-        // illegal for a size byte to be a multiple of 32.)
-        match self.version {
-            V1 | V2 | V3 => {
-                match self.bytes.borrow().get_u8(self.next_addr) {
-                    Ok(size_byte) => {
-                        if size_byte == 0 {
-                            return None;
-                        }
-                        let prop_num = size_byte.bits(BIT0..=BIT4);
-                        let prop = Property::from_number(prop_num);
-                        let len = size_byte.bits(BIT5..=BIT7) + 1;
-                        let prop_ref = Ok(PropertyRef {
-                            version: self.version,
-                            bytes: self.bytes.clone(),
-                            prop: prop,
-                            addr: self.next_addr + 1,
-                            len: len,
-                        });
-                        self.next_addr += 1 + len;
-                        Some(prop_ref)
-                    }
-                    Err(err) => {
-                        Some(Err(err))
-                    }
+    fn next(&mut self) -> Option<Result<PropertyRef, RuntimeError>> {
+        match PropertyRef::new(self.version, self.bytes.clone(), self.next_addr) {
+            Ok(prop_ref) => {
+                if let Some(prop_ref) = prop_ref {
+                    self.next_addr += 1 + prop_ref.len as usize;
+                    Some(Ok(prop_ref))
+                } else {
+                    None
                 }
             }
+            Err(err) => Some(Err(err))
         }
     }
 }
