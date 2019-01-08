@@ -1,13 +1,16 @@
 use rustyknife::*;
+use std::mem;
 
 pub struct TestPlatform {
     trace: bool,
+    output: String,
 }
 
 impl TestPlatform {
     pub fn new() -> Self {
         TestPlatform {
             trace: false,
+            output: String::new(),
         }
     }
 
@@ -15,11 +18,18 @@ impl TestPlatform {
     pub fn enable_trace(&mut self) {
         self.trace = true;
     }
+
+    #[allow(dead_code)]
+    pub fn take_output(&mut self) -> String {
+        let mut output = String::new();
+        mem::swap(&mut self.output, &mut output);
+        output
+    }
 }
 
 impl Platform for TestPlatform {
     fn print(&mut self, string: &str) {
-        print!("{}", string);
+        self.output += string;
     }
 
     fn next_instr(&mut self, pc: Address, call_stack_depth: usize, instr: &Instruction) {
