@@ -122,23 +122,6 @@ impl ObjectTable {
         Ok(None)
     }
 
-    pub fn get_prop(&self, prop_ref: &PropertyRef) -> Result<u16, RuntimeError> {
-        match prop_ref.len {
-            1 => Ok(self.bytes.borrow().get_u8(prop_ref.addr)? as u16),
-            2 => Ok(self.bytes.borrow().get_u16(prop_ref.addr)?),
-            _ => Err(RuntimeError::InvalidPropertySize(prop_ref.len))
-        }
-    }
-
-    pub fn set_prop(&mut self, prop_ref: &PropertyRef, val: u16) -> Result<(), RuntimeError> {
-        match prop_ref.len {
-            // TODO refactor so this goes through a writability check automatically
-            1 => self.bytes.borrow_mut().set_u8(prop_ref.addr, val as u8),
-            2 => self.bytes.borrow_mut().set_u16(prop_ref.addr, val),
-            _ => Err(RuntimeError::InvalidPropertySize(prop_ref.len)),
-        }
-    }
-
     pub fn iter_props(&self, obj: Object) -> Result<PropertyIterator, RuntimeError> {
         PropertyIterator::new(self.bytes.clone(), self.obj_props_addr(obj)?, self.version)
     }
@@ -381,6 +364,8 @@ impl Property {
 
 #[derive(Debug, Clone)]
 pub struct PropertyRef {
+    version: Version,
+    bytes: Rc<RefCell<Bytes>>,
     prop: Property,
     addr: Address,
     len: u8,
@@ -397,6 +382,23 @@ impl PropertyRef {
 
     pub fn len(&self) -> u8 {
         self.len
+    }
+
+    pub fn get(&self) -> Result<u16, RuntimeError> {
+        match self.len {
+            1 => Ok(self.bytes.borrow().get_u8(self.addr)? as u16),
+            2 => Ok(self.bytes.borrow().get_u16(self.addr)?),
+            _ => Err(RuntimeError::InvalidPropertySize(self.len))
+        }
+    }
+
+    pub fn set(&mut self, val: u16) -> Result<(), RuntimeError> {
+        match self.len {
+            // TODO refactor so this goes through a writability check automatically
+            1 => self.bytes.borrow_mut().set_u8(self.addr, val as u8),
+            2 => self.bytes.borrow_mut().set_u16(self.addr, val),
+            _ => Err(RuntimeError::InvalidPropertySize(self.len)),
+        }
     }
 }
 
@@ -437,7 +439,13 @@ impl Iterator for PropertyIterator {
                         let prop_num = size_byte.bits(BIT0..=BIT4);
                         let prop = Property::from_number(prop_num);
                         let len = size_byte.bits(BIT5..=BIT7) + 1;
-                        let prop_ref = Ok(PropertyRef { prop: prop, addr: self.next_addr + 1, len: len });
+                        let prop_ref = Ok(PropertyRef {
+                            version: self.version,
+                            bytes: self.bytes.clone(),
+                            prop: prop,
+                            addr: self.next_addr + 1,
+                            len: len,
+                        });
                         self.next_addr += 1 + len;
                         Some(prop_ref)
                     }

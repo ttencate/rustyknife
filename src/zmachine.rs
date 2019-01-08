@@ -218,7 +218,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let object = Object::from_number(self.eval(var_operands.get(0)?)?);
                 let property = Property::from_number(self.eval(var_operands.get(1)?)? as u8);
                 let val = if let Some(prop_ref) = self.mem.obj_table().get_prop_ref(object, property)? {
-                    self.mem.obj_table().get_prop(&prop_ref)?
+                    prop_ref.get()?
                 } else {
                     // 12.2
                     // ... When the game attempts to read the value of property n for an object
@@ -522,8 +522,8 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let object = Object::from_number(self.eval(var_operands.get(0)?)?);
                 let property = Property::from_number(self.eval(var_operands.get(1)?)? as u8);
                 let value = self.eval(var_operands.get(2)?)?;
-                if let Some(prop_ref) = self.mem.obj_table().get_prop_ref(object, property)? {
-                    self.mem.obj_table_mut().set_prop(&prop_ref, value)
+                if let Some(mut prop_ref) = self.mem.obj_table().get_prop_ref(object, property)? {
+                    prop_ref.set(value)
                 } else {
                     Err(RuntimeError::PropertyNotFound(object, property))
                 }
