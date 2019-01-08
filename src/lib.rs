@@ -18,5 +18,5 @@ mod zstring;
 pub use crate::bytes::Address;
 pub use crate::instr::Instruction;
 pub use crate::mem::Memory;
-pub use crate::platform::Platform;
+pub use crate::platform::{InterpreterMetadata, Platform};
 pub use crate::zmachine::ZMachine;

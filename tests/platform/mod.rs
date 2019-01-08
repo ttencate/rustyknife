@@ -28,6 +28,16 @@ impl TestPlatform {
 }
 
 impl Platform for TestPlatform {
+    fn interpreter_metadata(&self) -> InterpreterMetadata {
+        // These are configured to match the expected output of the CZECH test suite.
+        InterpreterMetadata {
+            interpreter_number: 0,
+            interpreter_version: 0,
+            standard_version_major: 1,
+            standard_version_minor: 0,
+        }
+    }
+
     fn print(&mut self, string: &str) {
         self.output += string;
     }

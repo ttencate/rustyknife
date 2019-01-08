@@ -136,7 +136,7 @@ impl<'a> ZStringDecoder<'a> {
                     // resolution of 6 or 9 Z-characters.)
                     if let Some(top) = iter.next() {
                         if let Some(bottom) = iter.next() {
-                            if let Some(c) = zscii((top.0 as usize) << 5 | bottom.0 as usize) {
+                            if let Some(c) = zscii((top.0 as u16) << 5 | bottom.0 as u16)? {
                                 out.push(c);
                             }
                         }
@@ -190,7 +190,7 @@ impl<'a> ZStringDecoder<'a> {
     }
 }
 
-pub fn zscii(idx: usize) -> Option<char> {
+pub fn zscii(idx: u16) -> Result<Option<char>, RuntimeError> {
     // 3.8
     // The character set of the Z-machine is called ZSCII (Zork Standard Code for Information
     // Interchange; pronounced to rhyme with "xyzzy"). ZSCII codes are 10-bit unsigned values
@@ -201,23 +201,23 @@ pub fn zscii(idx: usize) -> Option<char> {
         // ZSCII code 0 ("null") is defined for output but has no effect in any output stream.
         // (It is also used as a value meaning "no character" when reporting terminating
         // character codes, but is not formally defined for input.)
-        0 => None,
+        0 => Ok(None),
         // 3.8.2.5
         // ZSCII code 13 ("carriage return") is defined for input and output.
-        13 => Some('\n'),
+        13 => Ok(Some('\n')),
         // 3.8.3
         // ZSCII codes between 32 ("space") and 126 ("tilde") are defined for input and output,
         // and agree with standard ASCII (as well as all of the ISO 8859 character sets and
         // Unicode).
-        32..=126 => Some(idx as u8 as char),
+        32..=126 => Ok(Some(idx as u8 as char)),
         // 3.8.5
         // The block of codes between 155 and 251 are the "extra characters" and are used
         // differently by different story files. Some will need accented Latin characters (such
         // as French E-acute), others unusual punctuation (Spanish question mark), others new
         // alphabets (Cyrillic or Hebrew); still others may want dingbat characters,
         // mathematical or musical symbols, and so on.
-        155..=251 => Some(DEFAULT_UNICODE_TABLE[idx - 155]),
-        _ => None,
+        155..=251 => Ok(Some(DEFAULT_UNICODE_TABLE[idx as usize - 155])),
+        _ => Err(RuntimeError::InvalidCharacterCode(idx)),
     }
 }
 

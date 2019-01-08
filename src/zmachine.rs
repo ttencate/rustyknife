@@ -628,9 +628,9 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // for output (see S 3). In particular, it must certainly not be negative or larger
                 // than 1023.
                 let output_character_code = self.eval(var_operands.get(0)?)?;
-                let character = zstring::zscii(output_character_code as usize)
-                    .ok_or(RuntimeError::InvalidCharacterCode(output_character_code))?;
-                self.platform.print(&character.to_string());
+                if let Some(character) = zstring::zscii(output_character_code)? {
+                    self.platform.print(&character.to_string());
+                }
                 Ok(())
             }
             Instruction::PrintNum(var_operands) => {
@@ -704,6 +704,8 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
 
         // TODO move these into a helper in the Header
 
+        let int_meta = self.platform.interpreter_metadata();
+
         // Interpreter number
         // 11.1.3
         // Infocom used the interpreter numbers:
@@ -712,13 +714,21 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         //    2   Apple IIe        6   IBM PC            10   Apple IIgs
         //    3   Macintosh        7   Commodore 128     11   Tandy Color
         //    4   Amiga            8   Commodore 64
-        self.mem.bytes_mut().set_u8(Address::from_byte_address(0x001e), 6).unwrap();
+        self.mem.bytes_mut().set_u8(Address::from_byte_address(0x001e), int_meta.interpreter_number).unwrap();
 
         // Interpreter version
         // 11.1.3.1
         // Interpreter versions are conventionally ASCII codes for upper-case letters in Versions 4
         // and 5 (note that Infocom's Version 6 interpreters just store numbers here).
-        self.mem.bytes_mut().set_u8(Address::from_byte_address(0x001f), b'A').unwrap();
+        self.mem.bytes_mut().set_u8(Address::from_byte_address(0x001f), int_meta.interpreter_version).unwrap();
+
+        // Standard revision number
+        // 11.1.5
+        // If an interpreter obeys Revision n.m of this document perfectly, as far as anyone knows,
+        // then byte $32 should be written with n and byte $33 with m. If it is an earlier
+        // (non-standard) interpreter, it should leave these bytes as 0.
+        self.mem.bytes_mut().set_u8(Address::from_byte_address(0x0032), int_meta.standard_version_major).unwrap();
+        self.mem.bytes_mut().set_u8(Address::from_byte_address(0x0033), int_meta.standard_version_minor).unwrap();
     }
 
     fn call(&mut self, routine: Operand, args: &[Operand], store: Store) -> Result<(), RuntimeError> {
