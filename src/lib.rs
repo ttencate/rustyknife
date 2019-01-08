@@ -10,6 +10,7 @@ mod instr;
 mod mem;
 mod obj;
 mod platform;
+mod random;
 mod version;
 mod zmachine;
 mod zstring;

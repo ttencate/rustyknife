@@ -6,6 +6,7 @@ use crate::instr::*;
 use crate::mem::Memory;
 use crate::obj::*;
 use crate::platform::Platform;
+use crate::random::Random;
 use crate::version::*;
 use crate::zstring;
 use std::fmt;
@@ -20,6 +21,7 @@ pub struct ZMachine<'a, P> where P: Platform {
     mem: Memory,
     pc: Address,
     call_stack: Vec<StackFrame>,
+    random: Random,
 }
 
 impl<'a, P> ZMachine<'a, P> where P: Platform {
@@ -36,7 +38,9 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
             mem: mem,
             pc: Address::from_byte_address(0),
             call_stack: Vec::with_capacity(32),
+            random: Random::new(),
         };
+        z.random.seed_unpredictably();
         z.restart();
         Ok(z)
     }
@@ -579,7 +583,31 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 self.platform.print(&format!("{}", value as i16));
                 Ok(())
             }
-            // Instruction::Random(var_operands, store) =>
+            Instruction::Random(var_operands, store) => {
+                // random
+                // VAR:231 7 random range -> (result)
+                // If range is positive, returns a uniformly random number between 1 and range. If
+                // range is negative, the random number generator is seeded to that value and the
+                // return value is 0. Most interpreters consider giving 0 as range illegal (because
+                // they attempt a division with remainder by the range), but correct behaviour is
+                // to reseed the generator in as random a way as the interpreter can (e.g. by using
+                // the time in milliseconds).
+                // (Some version 3 games, such as 'Enchanter' release 29, had a debugging verb
+                // #random such that typing, say, #random 14 caused a call of random with -14.)
+                let range = self.eval(var_operands.get(0)?)? as i16;
+                let val = if range < 0 {
+                    self.random.seed(range as u16);
+                    0
+                } else if range == 0 {
+                    self.random.seed_unpredictably();
+                    0
+                } else {
+                    // Assuming that range is inclusive because we start from 1. The spec doesn't
+                    // say. Note that we can safely add 1 because we know that range <= 0x7fff.
+                    self.random.get(1..range as u16 + 1)
+                };
+                self.store(store, val)
+            }
             Instruction::Push(var_operands) => {
                 // push
                 // VAR:232 8 push value
