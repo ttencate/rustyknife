@@ -253,7 +253,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let object = Object::from_number(self.eval(var_operands.get(0)?)?);
                 let property = Property::from_number(self.eval(var_operands.get(1)?)? as u8);
                 let mut iter = self.mem.obj_table().iter_props(object)?;
-                if property.is_null() {
+                if !property.is_null() {
                     while let Some(res) = iter.next() {
                         if res?.prop() == property {
                             break;
