@@ -203,7 +203,7 @@ impl ObjectTable {
         let header_addr = self.obj_props_header_addr(obj)?;
         let text_length = self.bytes.borrow().get_u8(header_addr)
             .or(Err(RuntimeError::ObjectCorrupt(obj)))?;
-        Ok(header_addr + 1 + 2 * text_length as usize * 2)
+        Ok(header_addr + 1 + text_length as usize * 2)
     }
 
     fn obj_size(&self) -> usize {
@@ -271,12 +271,21 @@ impl ObjectTable {
     }
 
     fn describe_object(&self, obj: Object) -> Result<String, RuntimeError> {
-        Ok(format!("[{:3}] {:30}  parent: [{:3}]  child: [{:3}]  sibling: [{:3}]",
+        let mut props_str = String::new();
+        for prop_ref in self.iter_props(obj)? {
+            let prop_ref = prop_ref?;
+            if !props_str.is_empty() {
+                props_str.push_str(", ");
+            }
+            props_str.push_str(&prop_ref.to_string());
+        }
+        Ok(format!("[{:3}] {:30}  parent: [{:3}]  child: [{:3}]  sibling: [{:3}]  {{{}}}",
                 obj,
                 self.get_name(obj)?,
                 self.get_parent(obj)?,
                 self.get_child(obj)?,
-                self.get_sibling(obj)?))
+                self.get_sibling(obj)?,
+                props_str))
     }
 }
 
@@ -362,17 +371,23 @@ impl Property {
     }
 }
 
+impl Display for Property {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PropertyRef {
     version: Version,
     bytes: Rc<RefCell<Bytes>>,
     prop: Property,
-    addr: Address,
+    data_addr: Address,
     len: u8,
 }
 
 impl PropertyRef {
-    fn new(version: Version, bytes: Rc<RefCell<Bytes>>, addr: Address) -> Result<Option<PropertyRef>, RuntimeError> {
+    fn new(version: Version, bytes: Rc<RefCell<Bytes>>, size_byte_addr: Address) -> Result<Option<PropertyRef>, RuntimeError> {
         // In Versions 1 to 3, each property is stored as a block
         //
         //    size byte     the actual property data
@@ -383,7 +398,7 @@ impl PropertyRef {
         // illegal for a size byte to be a multiple of 32.)
         match version {
             V1 | V2 | V3 => {
-                let size_byte = bytes.borrow().get_u8(addr)?;
+                let size_byte = bytes.borrow().get_u8(size_byte_addr)?;
                 if size_byte == 0 {
                     Ok(None)
                 } else {
@@ -394,7 +409,7 @@ impl PropertyRef {
                         version: version,
                         bytes: bytes,
                         prop: prop,
-                        addr: addr,
+                        data_addr: size_byte_addr + 1,
                         len: len,
                     }))
                 }
@@ -407,7 +422,7 @@ impl PropertyRef {
     }
 
     pub fn addr(&self) -> Address {
-        self.addr
+        self.data_addr
     }
 
     pub fn len(&self) -> u8 {
@@ -416,8 +431,8 @@ impl PropertyRef {
 
     pub fn get(&self) -> Result<u16, RuntimeError> {
         match self.len {
-            1 => Ok(self.bytes.borrow().get_u8(self.addr)? as u16),
-            2 => Ok(self.bytes.borrow().get_u16(self.addr)?),
+            1 => Ok(self.bytes.borrow().get_u8(self.data_addr)? as u16),
+            2 => Ok(self.bytes.borrow().get_u16(self.data_addr)?),
             _ => Err(RuntimeError::InvalidPropertySize(self.len))
         }
     }
@@ -425,9 +440,21 @@ impl PropertyRef {
     pub fn set(&mut self, val: u16) -> Result<(), RuntimeError> {
         match self.len {
             // TODO refactor so this goes through a writability check automatically
-            1 => self.bytes.borrow_mut().set_u8(self.addr, val as u8),
-            2 => self.bytes.borrow_mut().set_u16(self.addr, val),
+            1 => self.bytes.borrow_mut().set_u8(self.data_addr, val as u8),
+            2 => self.bytes.borrow_mut().set_u16(self.data_addr, val),
             _ => Err(RuntimeError::InvalidPropertySize(self.len)),
+        }
+    }
+}
+
+impl Display for PropertyRef {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}: ", self.prop)?;
+        let bytes = self.bytes.borrow();
+        let slice = bytes.get_slice(self.data_addr..(self.data_addr + self.len as usize));
+        match slice {
+            Ok(slice) => write!(f, "{:?}", slice),
+            Err(err) => write!(f, "{}", err),
         }
     }
 }
@@ -454,7 +481,7 @@ impl Iterator for PropertyIterator {
         match PropertyRef::new(self.version, self.bytes.clone(), self.next_addr) {
             Ok(prop_ref) => {
                 if let Some(prop_ref) = prop_ref {
-                    self.next_addr += 1 + prop_ref.len as usize;
+                    self.next_addr += prop_ref.len as usize;
                     Some(Ok(prop_ref))
                 } else {
                     None
