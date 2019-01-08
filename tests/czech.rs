@@ -11,7 +11,5 @@ fn test_czech() {
     // platform.enable_trace();
     println!("{}", Memory::wrap(data.clone().into()).unwrap().obj_table().to_tree_string().unwrap());
     let mut z = ZMachine::new(&mut platform, data).unwrap();
-    loop {
-        z.step().unwrap();
-    }
+    z.run().unwrap();
 }

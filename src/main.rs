@@ -3,13 +3,6 @@ use std::fs;
 use std::path::PathBuf;
 use structopt::StructOpt;
 
-#[derive(StructOpt, Debug)]
-#[structopt(name = "basic")]
-struct Options {
-    #[structopt(name = "FILE", parse(from_os_str))]
-    story_file: PathBuf,
-}
-
 struct ConsolePlatform {
 }
 
@@ -24,7 +17,14 @@ impl Platform for ConsolePlatform {
     }
 }
 
-fn main() {
+#[derive(StructOpt, Debug)]
+#[structopt(name = "basic")]
+struct Options {
+    #[structopt(name = "FILE", parse(from_os_str))]
+    story_file: PathBuf,
+}
+
+fn run() -> i32 {
     let opts = Options::from_args();
 
     let story_file = fs::read(&opts.story_file)
@@ -39,7 +39,14 @@ fn main() {
 
     let mut z = ZMachine::new(&mut platform, story_file)
         .expect(&format!("error in story file {:?}", &opts.story_file));
-    loop {
-        z.step().unwrap();
+    if let Err(err) = z.run() {
+        eprintln!("{}", err);
+        return 1;
     }
+
+    0
+}
+
+fn main() {
+    std::process::exit(run());
 }

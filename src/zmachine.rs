@@ -53,14 +53,25 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         self.reset();
     }
 
-    pub fn step(&mut self) -> Result<(), RuntimeError> {
+    pub fn run(&mut self) -> Result<(), RuntimeError> {
+        while self.step()? {
+        }
+        Ok(())
+    }
+
+    fn step(&mut self) -> Result<bool, RuntimeError> {
         let mut decoder = InstructionDecoder::new(&self.mem, self.pc);
         let (instr, _loc) = decoder.decode()?;
         self.pc = decoder.next_addr();
 
         self.platform.next_instr(self.pc, self.call_stack.len() - 1, &instr);
+
+        if let Instruction::Quit() = instr {
+            return Ok(false);
+        }
         // TODO in case of any error, annotate it with location somehow
-        self.exec_instr(instr)
+        self.exec_instr(instr)?;
+        Ok(true)
     }
 
     fn exec_instr(&mut self, instr: Instruction) -> Result<(), RuntimeError> {
@@ -503,7 +514,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 self.platform.print("\n");
                 self.ret(1)
             }
-            // Instruction::Nop() =>
+            Instruction::Nop() => {
+                // nop
+                // 0OP:180 4 1/- nop
+                // Probably the official "no operation" instruction, which, appropriately, was
+                // never operated (in any of the Infocom datafiles): it may once have been a
+                // breakpoint.
+                Ok(())
+            }
             // Instruction::Save(branch) =>
             // Instruction::Restore(branch) =>
             // Instruction::Restart() =>
@@ -522,7 +540,10 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // call results in early Versions.)
                 self.frame_mut().pull().and(Ok(()))
             }
-            // Instruction::Quit() =>
+            Instruction::Quit() => {
+                // This should not happen, because the caller already checked.
+                Ok(())
+            }
             Instruction::NewLine() => {
                 self.platform.print("\n");
                 Ok(())
