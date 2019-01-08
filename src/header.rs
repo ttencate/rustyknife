@@ -98,6 +98,11 @@ impl Header {
         Address::from_byte_address(self.bytes.borrow().get_u16(Address::from_byte_address(0x000a)).unwrap())
     }
 
+    pub fn dict_table_addr(&self) -> Address {
+        // Location of dictionary (byte address)
+        Address::from_byte_address(self.bytes.borrow().get_u16(Address::from_byte_address(0x0008)).unwrap())
+    }
+
     fn file_length(&self) -> Result<usize, FormatError> {
         // Length of file
         let size = self.bytes.borrow().get_u16(Address::from_byte_address(0x001a)).unwrap() as usize;

@@ -19,6 +19,9 @@ quick_error! {
         GlobalsTableOutOfRange(globals_table: Address) {
             display("globals table is outside memory: {}", globals_table)
         }
+        DictionaryTableOutOfRange(dictionary_table: Address) {
+            display("dictionary table is outside memory: {}", dictionary_table)
+        }
         UnsupportedVersion(version_byte: u8) {
             display("story file has version {} which is unsupported", version_byte)
         }
@@ -109,6 +112,9 @@ quick_error! {
         }
         InvalidPropertyAddress(addr: Address) {
             display("invalid property address {}", addr)
+        }
+        BufferTooSmall(len: u16, min_len: u16) {
+            display("buffer too small: {} < {}", len, min_len)
         }
     }
 }

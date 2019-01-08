@@ -1,17 +1,20 @@
 // TODO pull this out into a separate rustyknife_console crate
 use rustyknife::*;
 use std::fs;
+use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use structopt::StructOpt;
 
-struct ConsolePlatform {
+struct ConsolePlatform<'a> {
     trace: bool,
+    input: &'a mut BufRead,
 }
 
-impl ConsolePlatform {
-    pub fn new() -> Self {
+impl<'a> ConsolePlatform<'a> {
+    pub fn new(input: &'a mut BufRead) -> Self {
         ConsolePlatform {
             trace: false,
+            input: input,
         }
     }
 
@@ -20,7 +23,7 @@ impl ConsolePlatform {
     }
 }
 
-impl Platform for ConsolePlatform {
+impl<'a> Platform for ConsolePlatform<'a> {
     fn print(&mut self, string: &str) {
         // TODO probably need to disable line buffering
         print!("{}", string);
@@ -30,6 +33,15 @@ impl Platform for ConsolePlatform {
         if self.trace {
             eprintln!("{:6}  {}{:?}", pc, "  ".repeat(call_stack_depth), instr);
         }
+    }
+
+    fn read_line(&mut self, _max_len_hint: usize) -> String {
+        std::io::stdout().flush().unwrap();
+        let mut buf = String::new();
+        self.input.read_line(&mut buf).unwrap();
+        // Remove trailing newline.
+        buf.pop().expect("unexpected EOF on stdin");
+        buf
     }
 }
 
@@ -53,7 +65,9 @@ fn run() -> i32 {
     //     .expect(&format!("error in story file {:?}", &opts.story_file));
     // print!("{:}", mem.obj_table().to_tree_string().unwrap());
 
-    let mut platform = ConsolePlatform::new();
+    let stdin = std::io::stdin();
+    let mut input = stdin.lock();
+    let mut platform = ConsolePlatform::new(&mut input);
     platform.set_trace(opts.trace);
 
     let mut z = ZMachine::new(&mut platform, story_file)

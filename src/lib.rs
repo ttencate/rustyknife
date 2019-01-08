@@ -3,6 +3,7 @@
 mod bits;
 mod bytes;
 mod decoder;
+mod dict;
 mod errors;
 mod header;
 mod globals;

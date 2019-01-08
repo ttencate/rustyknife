@@ -1,4 +1,5 @@
 use crate::bytes::Bytes;
+use crate::dict::DictionaryTable;
 use crate::errors::FormatError;
 use crate::globals::GlobalsTable;
 use crate::header::Header;
@@ -20,6 +21,7 @@ pub struct Memory {
     globals_table: GlobalsTable,
     obj_table: ObjectTable,
     abbrs_table: AbbreviationsTable,
+    dict_table: DictionaryTable,
 }
 
 impl Memory {
@@ -30,6 +32,7 @@ impl Memory {
         let globals_table = GlobalsTable::new(version, bytes.clone(), header.globals_table_addr())?;
         let abbrs_table = AbbreviationsTable::new(version, bytes.clone(), header.abbrs_table_addr())?;
         let obj_table = ObjectTable::new(version, bytes.clone(), header.obj_table_addr(), abbrs_table.clone())?;
+        let dict_table = DictionaryTable::new(version, bytes.clone(), header.dict_table_addr())?;
 
         Ok(Memory {
             version: version,
@@ -38,6 +41,7 @@ impl Memory {
             globals_table: globals_table,
             abbrs_table: abbrs_table,
             obj_table: obj_table,
+            dict_table: dict_table,
         })
     }
 
@@ -79,5 +83,9 @@ impl Memory {
 
     pub fn obj_table_mut(&mut self) -> &mut ObjectTable {
         &mut self.obj_table
+    }
+
+    pub fn dict_table(&self) -> &DictionaryTable {
+        &self.dict_table
     }
 }

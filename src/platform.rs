@@ -20,6 +20,11 @@ pub trait Platform {
 
     fn print(&mut self, string: &str);
 
+    fn update_status_line(&mut self) {
+    }
+
+    fn read_line(&mut self, max_len_hint: usize) -> String;
+
     fn next_instr(&mut self, _pc: Address, _call_stack_depth: usize, _instr: &Instruction) {
     }
 }

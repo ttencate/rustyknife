@@ -620,7 +620,20 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                     Err(RuntimeError::PropertyNotFound(object, property))
                 }
             }
-            // Instruction::Sread(var_operands) =>
+            Instruction::Sread(var_operands) => {
+                // read
+                // VAR:228 4 1 sread text parse
+                //
+                // (Note that Inform internally names the read opcode as aread in Versions 5 and
+                // later and sread in Versions 3 and 4.)
+                //
+                // This opcode reads a whole command from the keyboard (no prompt is automatically
+                // displayed). It is legal for this to be called with the cursor at any position on
+                // any window.
+                let text = Address::from_byte_address(self.eval(var_operands.get(0)?)?);
+                let parse = Address::from_byte_address(self.eval(var_operands.get(1)?)?);
+                self.read(text, parse)
+            }
             Instruction::PrintChar(var_operands) => {
                 // print_char
                 // VAR:229 5 print_char output-character-code
@@ -852,6 +865,101 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
     fn store_u16(&mut self, addr: Address, val: u16) -> Result<(), RuntimeError> {
         // TODO writability check
         self.mem.bytes_mut().set_u16(addr, val)
+    }
+
+    fn read(&mut self, text: Address, parse: Address) -> Result<(), RuntimeError> {
+        match self.version() {
+            // In Versions 1 to 3, the status line is automatically redisplayed first.
+            V1 | V2 | V3 => {
+                self.platform.update_status_line();
+            }
+        }
+
+        let max_text_len = match self.version() {
+            // In Versions 1 to 4, byte 0 of the text-buffer should initially contain the maximum
+            // number of letters which can be typed, minus 1 (the interpreter should not accept
+            // more than this).
+            V1 | V2 | V3 => {
+                self.mem.bytes().get_u8(text)? as u16 + 1
+            }
+            // In Versions 5 and later, ...
+        };
+
+        // Initially, byte 0 of the parse-buffer should hold the maximum number of textual words
+        // which can be parsed. (If this is n, the buffer must be at least 2 + 4*n bytes long to
+        // hold the results of the analysis.)
+        let max_words = self.mem.bytes().get_u8(parse)?;
+        let max_parse_len = 2 + 4 * max_words as u16;
+
+        // (Interpreters are asked to halt with a suitable error message if the text or
+        // parse buffers have length of less than 3 or 6 bytes, respectively: this
+        // sometimes occurs due to a previous array being overrun, causing bugs which are
+        // very difficult to find.)
+        if max_text_len < 3 {
+            return Err(RuntimeError::BufferTooSmall(max_text_len, 3));
+        }
+        if max_parse_len < 6 {
+            return Err(RuntimeError::BufferTooSmall(max_parse_len, 6));
+        }
+
+        // A sequence of characters is read in from the current input stream until a carriage
+        // return (or, in Versions 5 and later, any terminating character) is found.
+        let raw_input = self.platform.read_line(max_text_len as usize);
+        let input = raw_input.to_lowercase();
+        match self.version() {
+            V1 | V2 | V3 => {
+                // The text typed is reduced to lower case (so that it can tidily be printed back
+                // by the program if need be) and stored in bytes 1 onward, with a zero terminator
+                // (but without any other terminator, such as a carriage return code). (This means
+                // that if byte 0 contains n then the buffer must contain n+1 bytes, which makes it
+                // a string array of length n in Inform terminology.)
+                let mut bytes_mut = self.mem.bytes_mut();
+                let mut write_addr = text + 1;
+                for c in input.chars().take(max_text_len as usize) {
+                    let byte = if c <= 0xff as char { c as u8 } else { b'?' };
+                    bytes_mut.set_u8(write_addr, byte)?;
+                    write_addr += 1;
+                }
+                bytes_mut.set_u8(write_addr, 0)?;
+            }
+        }
+
+        // If input was terminated in the usual way, by the player typing a carriage
+        // return, then a carriage return is printed (so the cursor moves to the next
+        // line).
+        // [Not needed because the newline was already echoed by the terminal.]
+        // self.platform.print("\n");
+
+        // Next, lexical analysis is performed on the text (...).
+
+        // The interpreter divides the text into words and looks them up in the dictionary,
+        // as described in S 13. The number of words is written in byte 1 and one 4-byte
+        // block is written for each word, from byte 2 onwards (except that it should stop
+        // before going beyond the maximum number of words specified). Each block consists
+        // of the byte address of the word in the dictionary, if it is in the dictionary,
+        // or 0 if it isn't; followed by a byte giving the number of letters in the word;
+        // and finally a byte giving the position in the text-buffer of the first letter of
+        // the word.
+        let mut num_words = 0;
+        let mut parse_addr = parse + 2;
+        for word in self.mem.dict_table().words(input) {
+            num_words += 1;
+            if num_words <= max_words {
+                let (addr, len, start_idx) =
+                    if let Some(word) = word {
+                        (word.addr().to_byte_address(), word.len(), word.start_idx())
+                    } else {
+                        (0, 0, 0)
+                    };
+                self.mem.bytes_mut().set_u16(parse_addr, addr)?;
+                self.mem.bytes_mut().set_u8(parse_addr + 3, len)?;
+                self.mem.bytes_mut().set_u8(parse_addr + 4, start_idx)?;
+                parse_addr += 4;
+            }
+        }
+        self.mem.bytes_mut().set_u8(parse + 1, num_words)?;
+
+        Ok(())
     }
 
     fn version(&self) -> Version {
