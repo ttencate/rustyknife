@@ -395,7 +395,16 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let new_val = self.eval_var(variable)?.wrapping_sub(1);
                 self.store(variable, new_val)
             }
-            // Instruction::PrintAddr(operand) =>
+            Instruction::PrintAddr(operand) => {
+                // print_addr
+                // 1OP:135 7 print_addr byte-address-of-string
+                // Print (Z-encoded) string at given byte address, in dynamic or static memory.
+                let addr = Address::from_byte_address(self.eval(operand)?);
+                let zstring = self.mem.bytes().get_zstring(addr)?;
+                let string = zstring.decode(self.version(), &self.mem.abbrs_table())?;
+                self.platform.print(&string);
+                Ok(())
+            }
             Instruction::RemoveObj(operand) => {
                 // remove_obj
                 // 1OP:137 9 remove_obj object
@@ -485,7 +494,15 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 self.platform.print(&string);
                 Ok(())
             }
-            // Instruction::PrintRet(String) =>
+            Instruction::PrintRet(string) => {
+                // print_ret
+                // 0OP:179 3 print_ret <literal-string>
+                // Print the quoted (literal) Z-encoded string, then print a new-line and then
+                // return true (i.e., 1).
+                self.platform.print(&string);
+                self.platform.print("\n");
+                self.ret(1)
+            }
             // Instruction::Nop() =>
             // Instruction::Save(branch) =>
             // Instruction::Restore(branch) =>
