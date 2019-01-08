@@ -711,12 +711,19 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
 
     fn eval_var(&mut self, var: Variable) -> Result<u16, RuntimeError> {
         match var {
-            // 6.3
-            // Writing to the stack pointer (variable number $00) pushes a value onto the stack;
-            // reading from it pulls a value off.
-            Variable::TopOfStack => self.frame_mut().pull(),
+            Variable::PushPullStack => self.frame_mut().pull(),
+            Variable::ReadWriteTopOfStack => self.frame_mut().top(),
             Variable::Local(local) => self.frame().local(local),
             Variable::Global(global) => self.mem.globals().get(global),
+        }
+    }
+
+    fn store(&mut self, store: Store, val: u16) -> Result<(), RuntimeError> {
+        match store {
+            Variable::PushPullStack => self.frame_mut().push(val),
+            Variable::ReadWriteTopOfStack => self.frame_mut().set_top(val),
+            Variable::Local(local) => self.frame_mut().set_local(local, val),
+            Variable::Global(global) => self.mem.globals_mut().set(global, val),
         }
     }
 
@@ -728,19 +735,9 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         // writing the operand turns as a small constant with value the reference number of the
         // variable turns).
         if val < 0x100 {
-            Ok(Variable::from_byte(val as u8))
+            Ok(Variable::from_byte(val as u8, true))
         } else {
             Err(RuntimeError::InvalidVariable(val))
-        }
-    }
-
-    fn store(&mut self, store: Store, val: u16) -> Result<(), RuntimeError> {
-        match store {
-            // 6.3
-            // Writing to the stack pointer (variable number $00) pushes a value onto the stack;
-            Variable::TopOfStack => self.frame_mut().push(val),
-            Variable::Local(local) => self.frame_mut().set_local(local, val),
-            Variable::Global(global) => self.mem.globals_mut().set(global, val),
         }
     }
 
@@ -785,7 +782,7 @@ impl StackFrame {
         StackFrame {
             stack: vec![],
             locals: vec![],
-            store: Variable::TopOfStack, // Unused.
+            store: Variable::PushPullStack, // Unused.
             return_addr: Address::from_byte_address(0), // Unused.
         }
     }
@@ -842,16 +839,25 @@ impl StackFrame {
         Ok((frame, addr))
     }
 
-    fn push(&mut self, value: u16) -> Result<(), RuntimeError> {
+    fn push(&mut self, val: u16) -> Result<(), RuntimeError> {
         if self.stack.len() >= STACK_SIZE_LIMIT {
             return Err(RuntimeError::StackOverflow);
         }
-        self.stack.push(value);
+        self.stack.push(val);
         Ok(())
     }
 
     fn pull(&mut self) -> Result<u16, RuntimeError> {
         self.stack.pop().ok_or(RuntimeError::StackUnderflow)
+    }
+
+    fn top(&self) -> Result<u16, RuntimeError> {
+        self.stack.last().map(|v| *v).ok_or(RuntimeError::StackUnderflow)
+    }
+
+    fn set_top(&mut self, val: u16) -> Result<(), RuntimeError> {
+        *self.stack.last_mut().ok_or(RuntimeError::StackUnderflow)? = val;
+        Ok(())
     }
 
     fn num_locals(&self) -> usize {

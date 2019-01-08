@@ -288,7 +288,7 @@ impl<'a> InstructionDecoder<'a> {
         Ok(match operand_type {
             OperandType::LargeConstant => Operand::LargeConstant(self.next_u16()?),
             OperandType::SmallConstant => Operand::SmallConstant(self.next_u8()?),
-            OperandType::Variable => Operand::Variable(Variable::from_byte(self.next_u8()?)),
+            OperandType::Variable => Operand::Variable(Variable::from_byte(self.next_u8()?, false)),
             OperandType::Omitted => panic!("cannot read an omitted operand")
         })
     }
@@ -315,7 +315,7 @@ impl<'a> InstructionDecoder<'a> {
         // "Store" instructions return a value: e.g., mul multiplies its two operands together.
         // Such instructions must be followed by a single byte giving the variable number of where
         // to put the result.
-        Ok(Variable::from_byte(self.next_u8()?))
+        Ok(Variable::from_byte(self.next_u8()?, false))
     }
 
     fn read_branch(&mut self) -> Result<Branch, RuntimeError> {

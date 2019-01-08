@@ -108,17 +108,29 @@ impl Global {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Variable {
-    TopOfStack,
+    // 6.3
+    // Writing to the stack pointer (variable number $00) pushes a value onto the stack; reading
+    // from it pulls a value off.
+    PushPullStack,
+    // 6.3.4
+    // In the seven opcodes that take indirect variable references (inc, dec, inc_chk, dec_chk,
+    // load, store, pull), an indirect reference to the stack pointer does not push or pull the top
+    // item of the stack - it is read or written in place.
+    ReadWriteTopOfStack,
     Local(Local),
     Global(Global),
 }
 
 impl Variable {
-    pub fn from_byte(byte: u8) -> Variable {
+    pub fn from_byte(byte: u8, indirect: bool) -> Variable {
         // 4.2.2
         match byte {
             // Variable number $00 refers to the top of the stack, ...
-            0 => Variable::TopOfStack,
+            0 => if indirect {
+                Variable::ReadWriteTopOfStack
+            } else {
+                Variable::PushPullStack
+            },
             // ... $01 to $0f mean the local variables of the current routine ...
             0x01..=0x0f => Variable::Local(Local(byte)),
             // ... and $10 to $ff mean the global variables.
