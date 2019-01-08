@@ -13,6 +13,8 @@ pub struct Memory {
     // This needs to be Rc so that all "views" on it can hold references to it (which would
     // otherwise be forbidden because struct fields can't hold references to other fields in the
     // same struct). And of course, it needs to be RefCell to provide mutability.
+    // TODO see if we can make Memory hold the Vec<u8> directly, as well as the cached fields, and
+    // implement all the tables as traits on Memory instead. That could get rid of the unsafety.
     bytes: Rc<RefCell<Bytes>>,
     header: Header,
     globals_table: GlobalsTable,
