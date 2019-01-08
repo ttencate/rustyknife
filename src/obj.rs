@@ -481,7 +481,7 @@ impl Iterator for PropertyIterator {
         match PropertyRef::new(self.version, self.bytes.clone(), self.next_addr) {
             Ok(prop_ref) => {
                 if let Some(prop_ref) = prop_ref {
-                    self.next_addr += prop_ref.len as usize;
+                    self.next_addr = prop_ref.data_addr + prop_ref.len as usize;
                     Some(Ok(prop_ref))
                 } else {
                     None
