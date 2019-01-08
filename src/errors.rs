@@ -103,6 +103,9 @@ quick_error! {
         DivisionByZero {
             display("division by zero")
         }
+        InvalidPropertyAddress(addr: Address) {
+            display("invalid property address {}", addr)
+        }
     }
 }
 

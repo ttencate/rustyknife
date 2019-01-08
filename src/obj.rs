@@ -126,6 +126,17 @@ impl ObjectTable {
         PropertyIterator::new(self.version, self.bytes.clone(), self.obj_props_addr(obj)?)
     }
 
+    // This method breaks abstraction, but we have no choice: the get_prop_addr instruction only
+    // takes a property data addres as operand.
+    pub fn get_prop_len(&self, prop_data_addr: Address) -> Result<u8, RuntimeError> {
+        let offset = match self.version {
+            V1 | V2 | V3 => -1,
+        };
+        Ok(PropertyRef::new(self.version, self.bytes.clone(), prop_data_addr + offset)?
+            .ok_or(RuntimeError::InvalidPropertyAddress(prop_data_addr))?
+            .len())
+    }
+
     pub fn get_prop_default(&self, prop: Property) -> Result<u16, RuntimeError> {
         // 12.1
         // The object table is held in dynamic memory and its byte address is stored in the word at
