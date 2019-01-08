@@ -387,7 +387,7 @@ impl<'a> InstructionDecoder<'a> {
         let zstring = self.mem.bytes().get_zstring(self.next_addr)
             .or(Err(RuntimeError::ProgramCounterOutOfRange(self.loc())))?;
         self.next_addr += zstring.len();
-        zstring.decode(self.mem.version(), self.mem.abbrs_table())
+        zstring.decode(self.mem.version(), Some(self.mem.abbrs_table()))
     }
 
     fn loc(&self) -> ErrorLocation {

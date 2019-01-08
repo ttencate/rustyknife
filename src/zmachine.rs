@@ -412,7 +412,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Print (Z-encoded) string at given byte address, in dynamic or static memory.
                 let addr = Address::from_byte_address(self.eval(operand)?);
                 let zstring = self.mem.bytes().get_zstring(addr)?;
-                let string = zstring.decode(self.version(), &self.mem.abbrs_table())?;
+                let string = zstring.decode(self.version(), Some(&self.mem.abbrs_table()))?;
                 self.platform.print(&string);
                 Ok(())
             }
@@ -451,7 +451,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // legal for this to jump into a different routine (which should not change the
                 // routine call state), although it is considered bad practice to do so and the Txd
                 // disassembler is confused by it.
-                // 
+                //
                 // The destination of the jump opcode is:
                 // Address after instruction + Offset - 2
                 // This is analogous to the calculation for branch offsets.
@@ -465,7 +465,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Print the (Z-encoded) string at the given packed address in high memory.
                 let addr = Address::from_packed_address(self.eval(operand)?, self.version());
                 let zstring = self.mem.bytes().get_zstring(addr)?;
-                let string = zstring.decode(self.version(), &self.mem.abbrs_table())?;
+                let string = zstring.decode(self.version(), Some(&self.mem.abbrs_table()))?;
                 self.platform.print(&string);
                 Ok(())
             }
@@ -906,6 +906,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         // return (or, in Versions 5 and later, any terminating character) is found.
         let raw_input = self.platform.read_line(max_text_len as usize);
         let input = raw_input.to_lowercase();
+        let mut write_addr = text + 1;
         match self.version() {
             V1 | V2 | V3 => {
                 // The text typed is reduced to lower case (so that it can tidily be printed back
@@ -914,7 +915,6 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // that if byte 0 contains n then the buffer must contain n+1 bytes, which makes it
                 // a string array of length n in Inform terminology.)
                 let mut bytes_mut = self.mem.bytes_mut();
-                let mut write_addr = text + 1;
                 for c in input.chars().take(max_text_len as usize) {
                     let byte = if c <= 0xff as char { c as u8 } else { b'?' };
                     bytes_mut.set_u8(write_addr, byte)?;
@@ -923,12 +923,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 bytes_mut.set_u8(write_addr, 0)?;
             }
         }
-
-        // If input was terminated in the usual way, by the player typing a carriage
-        // return, then a carriage return is printed (so the cursor moves to the next
-        // line).
-        // [Not needed because the newline was already echoed by the terminal.]
-        // self.platform.print("\n");
+        let input = self.mem.bytes().get_slice(text + 1..write_addr)?.to_vec();
 
         // Next, lexical analysis is performed on the text (...).
 
@@ -942,18 +937,13 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         // the word.
         let mut num_words = 0;
         let mut parse_addr = parse + 2;
-        for word in self.mem.dict_table().words(input) {
+        for word in self.mem.dict_table().words(input)? {
             num_words += 1;
             if num_words <= max_words {
-                let (addr, len, start_idx) =
-                    if let Some(word) = word {
-                        (word.addr().to_byte_address(), word.len(), word.start_idx())
-                    } else {
-                        (0, 0, 0)
-                    };
-                self.mem.bytes_mut().set_u16(parse_addr, addr)?;
-                self.mem.bytes_mut().set_u8(parse_addr + 3, len)?;
-                self.mem.bytes_mut().set_u8(parse_addr + 4, start_idx)?;
+                // println!("{:?}", word);
+                self.mem.bytes_mut().set_u16(parse_addr, word.addr().map(|a| a.to_byte_address()).unwrap_or(0))?;
+                self.mem.bytes_mut().set_u8(parse_addr + 2, word.len())?;
+                self.mem.bytes_mut().set_u8(parse_addr + 3, word.start_idx())?;
                 parse_addr += 4;
             }
         }

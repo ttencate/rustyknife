@@ -116,6 +116,9 @@ quick_error! {
         BufferTooSmall(len: u16, min_len: u16) {
             display("buffer too small: {} < {}", len, min_len)
         }
+        DictionaryTableCorrupt {
+            display("dictionary table corrupt")
+        }
     }
 }
 

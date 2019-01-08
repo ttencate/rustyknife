@@ -23,8 +23,8 @@ impl ZString {
     }
 
     // TODO make this a method on AbbreviationsTable instead?
-    pub fn decode(&self, version: Version, abbrs_table: &AbbreviationsTable) -> Result<String, RuntimeError> {
-        ZStringDecoder::new(version, Some(abbrs_table)).decode(self)
+    pub fn decode(&self, version: Version, abbrs_table: Option<&AbbreviationsTable>) -> Result<String, RuntimeError> {
+        ZStringDecoder::new(version, abbrs_table).decode(self)
     }
 }
 
