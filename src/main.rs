@@ -1,9 +1,23 @@
+// TODO pull this out into a separate rustyknife_console crate
 use rustyknife::*;
 use std::fs;
 use std::path::PathBuf;
 use structopt::StructOpt;
 
 struct ConsolePlatform {
+    trace: bool,
+}
+
+impl ConsolePlatform {
+    pub fn new() -> Self {
+        ConsolePlatform {
+            trace: false,
+        }
+    }
+
+    pub fn set_trace(&mut self, trace: bool) {
+        self.trace = trace;
+    }
 }
 
 impl Platform for ConsolePlatform {
@@ -13,7 +27,9 @@ impl Platform for ConsolePlatform {
     }
 
     fn next_instr(&mut self, pc: Address, call_stack_depth: usize, instr: &Instruction) {
-        eprintln!("{:6}  {:}{:?}", pc, "  ".repeat(call_stack_depth), instr);
+        if self.trace {
+            eprintln!("{:6}  {}{:?}", pc, "  ".repeat(call_stack_depth), instr);
+        }
     }
 }
 
@@ -22,6 +38,8 @@ impl Platform for ConsolePlatform {
 struct Options {
     #[structopt(name = "FILE", parse(from_os_str))]
     story_file: PathBuf,
+    #[structopt(short = "t", long = "trace", help = "print Z-machine instructions to stderr as they are executed")]
+    trace: bool,
 }
 
 fn run() -> i32 {
@@ -35,7 +53,8 @@ fn run() -> i32 {
     //     .expect(&format!("error in story file {:?}", &opts.story_file));
     // print!("{:}", mem.obj_table().to_tree_string().unwrap());
 
-    let mut platform = ConsolePlatform {};
+    let mut platform = ConsolePlatform::new();
+    platform.set_trace(opts.trace);
 
     let mut z = ZMachine::new(&mut platform, story_file)
         .expect(&format!("error in story file {:?}", &opts.story_file));
