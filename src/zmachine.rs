@@ -123,7 +123,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let parent_of_a = self.mem.obj_table().get_parent(a)?;
                 self.cond_branch(parent_of_a == b, branch)
             }
-            // Instruction::Test(var_operands, branch) =>
+            Instruction::Test(var_operands, branch) => {
+                // test
+                // 2OP:7 7 test bitmap flags ?(label)
+                // Jump if all of the flags in bitmap are set (i.e. if bitmap & flags == flags).
+                let bitmap = self.eval(var_operands.get(0)?)?;
+                let flags = self.eval(var_operands.get(1)?)?;
+                self.cond_branch(bitmap & flags == flags, branch)
+            }
             Instruction::Or(var_operands, store) => {
                 // or
                 // 2OP:8 8 or a b -> (result)
