@@ -135,8 +135,12 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Jump if object a is a direct child of b, i.e., if parent of a is b.
                 let a = Object::from_number(self.eval(var_operands.get(0)?)?);
                 let b = Object::from_number(self.eval(var_operands.get(1)?)?);
-                let parent_of_a = self.mem.obj_table().get_parent(a)?;
-                self.cond_branch(parent_of_a == b, branch)
+                let cond = if let Some(a_ref) = self.mem.obj_table().get_obj_ref(a)? {
+                    a_ref.parent()? == b
+                } else {
+                    b.is_null()
+                };
+                self.cond_branch(cond, branch)
             }
             Instruction::Test(var_operands, branch) => {
                 // test
@@ -168,7 +172,11 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Jump if object has attribute.
                 let object = Object::from_number(self.eval(var_operands.get(0)?)?);
                 let attribute = Attribute::from_number(self.eval(var_operands.get(1)?)? as u8);
-                let cond = self.mem.obj_table().get_attr(object, attribute)?;
+                let cond = if let Some(obj_ref) = self.mem.obj_table_mut().get_obj_ref(object)? {
+                    obj_ref.attr(attribute)?
+                } else {
+                    false
+                };
                 self.cond_branch(cond, branch)
             }
             Instruction::SetAttr(var_operands) => {
@@ -177,7 +185,11 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Make object have the attribute numbered attribute.
                 let object = Object::from_number(self.eval(var_operands.get(0)?)?);
                 let attribute = Attribute::from_number(self.eval(var_operands.get(1)?)? as u8);
-                self.mem.obj_table_mut().set_attr(object, attribute, true)
+                if let Some(mut obj_ref) = self.mem.obj_table_mut().get_obj_ref(object)? {
+                    obj_ref.set_attr(attribute, true)
+                } else {
+                    Ok(())
+                }
             }
             Instruction::ClearAttr(var_operands) => {
                 // clear_attr
@@ -185,7 +197,11 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Make object not have the attribute numbered attribute.
                 let object = Object::from_number(self.eval(var_operands.get(0)?)?);
                 let attribute = Attribute::from_number(self.eval(var_operands.get(1)?)? as u8);
-                self.mem.obj_table_mut().set_attr(object, attribute, false)
+                if let Some(mut obj_ref) = self.mem.obj_table_mut().get_obj_ref(object)? {
+                    obj_ref.set_attr(attribute, false)
+                } else {
+                    Ok(())
+                }
             }
             Instruction::Store(var_operands) => {
                 // store
@@ -205,7 +221,15 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // at any point in the object tree; it may legally have parent zero.)
                 let object = Object::from_number(self.eval(var_operands.get(0)?)?);
                 let destination = Object::from_number(self.eval(var_operands.get(1)?)?);
-                self.mem.obj_table_mut().insert_obj(object, destination)
+                if !destination.is_null() {
+                    if let Some(mut obj_ref) = self.mem.obj_table_mut().get_obj_ref(object)? {
+                        obj_ref.insert_into(destination)
+                    } else {
+                        Ok(())
+                    }
+                } else {
+                    Ok(())
+                }
             }
             Instruction::Loadw(var_operands, store) => {
                 // loadw
@@ -239,14 +263,18 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // greater than 2, and the result is unspecified.
                 let object = Object::from_number(self.eval(var_operands.get(0)?)?);
                 let property = Property::from_number(self.eval(var_operands.get(1)?)? as u8);
-                let val = if let Some(prop_ref) = self.mem.obj_table().get_prop_ref(object, property)? {
-                    prop_ref.get()?
+                let val = if let Some(obj_ref) = self.mem.obj_table().get_obj_ref(object)? {
+                    if let Some(prop_ref) = obj_ref.get_prop_ref(property)? {
+                        prop_ref.get()?
+                    } else {
+                        // 12.2
+                        // ... When the game attempts to read the value of property n for an object
+                        // which does not provide property n, the n-th entry in this table is the
+                        // resulting value.
+                        self.mem.obj_table().get_prop_default(property)?
+                    }
                 } else {
-                    // 12.2
-                    // ... When the game attempts to read the value of property n for an object
-                    // which does not provide property n, the n-th entry in this table is the
-                    // resulting value.
-                    self.mem.obj_table().get_prop_default(property)?
+                    0
                 };
                 self.store(store, val)
             }
@@ -257,8 +285,12 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // object's property. This must return 0 if the object hasn't got the property.
                 let object = Object::from_number(self.eval(var_operands.get(0)?)?);
                 let property = Property::from_number(self.eval(var_operands.get(1)?)? as u8);
-                let addr = if let Some(prop_ref) = self.mem.obj_table().get_prop_ref(object, property)? {
-                    prop_ref.addr()
+                let addr = if let Some(obj_ref) = self.mem.obj_table().get_obj_ref(object)? {
+                    if let Some(prop_ref) = obj_ref.get_prop_ref(property)? {
+                        prop_ref.addr()
+                    } else {
+                        Address::null()
+                    }
                 } else {
                     Address::null()
                 };
@@ -274,16 +306,20 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // message (if it can efficiently check this condition).
                 let object = Object::from_number(self.eval(var_operands.get(0)?)?);
                 let property = Property::from_number(self.eval(var_operands.get(1)?)? as u8);
-                let mut iter = self.mem.obj_table().iter_props(object)?;
-                if !property.is_null() {
-                    while let Some(res) = iter.next() {
-                        if res?.prop() == property {
-                            break;
+                let next_prop = if let Some(obj_ref) = self.mem.obj_table().get_obj_ref(object)? {
+                    let mut iter = obj_ref.iter_props()?;
+                    if !property.is_null() {
+                        while let Some(res) = iter.next() {
+                            if res?.prop() == property {
+                                break;
+                            }
                         }
                     }
-                }
-                let next_prop = if let Some(res) = iter.next() {
-                    res?.prop()
+                    if let Some(res) = iter.next() {
+                        res?.prop()
+                    } else {
+                        Property::null()
+                    }
                 } else {
                     Property::null()
                 };
@@ -349,7 +385,11 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // 1OP:129 1 get_sibling object -> (result) ?(label)
                 // Get next object in tree, branching if this exists, i.e. is not 0.
                 let object = Object::from_number(self.eval(operand)?);
-                let sibling = self.mem.obj_table().get_sibling(object)?;
+                let sibling = if let Some(obj_ref) = self.mem.obj_table().get_obj_ref(object)? {
+                    obj_ref.sibling()?
+                } else {
+                    Object::null()
+                };
                 self.store(store, sibling.number())?;
                 self.cond_branch(!sibling.is_null(), branch)
             }
@@ -359,7 +399,11 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Get first object contained in given object, branching if this exists, i.e. is
                 // not nothing (i.e., is not 0).
                 let object = Object::from_number(self.eval(operand)?);
-                let child = self.mem.obj_table().get_child(object)?;
+                let child = if let Some(obj_ref) = self.mem.obj_table().get_obj_ref(object)? {
+                    obj_ref.child()?
+                } else {
+                    Object::null()
+                };
                 self.store(store, child.number())?;
                 self.cond_branch(!child.is_null(), branch)
             }
@@ -368,7 +412,11 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // 1OP:131 3 get_parent object -> (result)
                 // Get parent object (note that this has no "branch if exists" clause).
                 let object = Object::from_number(self.eval(operand)?);
-                let parent = self.mem.obj_table().get_parent(object)?;
+                let parent = if let Some(obj_ref) = self.mem.obj_table().get_obj_ref(object)? {
+                    obj_ref.parent()?
+                } else {
+                    Object::null()
+                };
                 self.store(store, parent.number())
             }
             Instruction::GetPropLen(operand, store) => {
@@ -421,8 +469,12 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // 1OP:137 9 remove_obj object
                 // Detach the object from its parent, so that it no longer has any parent. (Its
                 // children remain in its possession.)
-                let obj = Object::from_number(self.eval(operand)?);
-                self.mem.obj_table_mut().remove_obj(obj)
+                let object = Object::from_number(self.eval(operand)?);
+                if let Some(mut obj_ref) = self.mem.obj_table_mut().get_obj_ref(object)? {
+                    obj_ref.remove_from_parent()
+                } else {
+                    Ok(())
+                }
             }
             Instruction::PrintObj(operand) => {
                 // print_obj
@@ -431,7 +483,11 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // property). If the object number is invalid, the interpreter should halt with a
                 // suitable error message.
                 let object = Object::from_number(self.eval(operand)?);
-                let name = self.mem.obj_table().get_name(object)?;
+                let name = if let Some(obj_ref) = self.mem.obj_table().get_obj_ref(object)? {
+                    obj_ref.name()?
+                } else {
+                    "".to_string()
+                };
                 self.platform.print(&name);
                 Ok(())
             }
@@ -614,10 +670,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let object = Object::from_number(self.eval(var_operands.get(0)?)?);
                 let property = Property::from_number(self.eval(var_operands.get(1)?)? as u8);
                 let value = self.eval(var_operands.get(2)?)?;
-                if let Some(mut prop_ref) = self.mem.obj_table().get_prop_ref(object, property)? {
-                    prop_ref.set(value)
+                if let Some(obj_ref) = self.mem.obj_table().get_obj_ref(object)? {
+                    if let Some(mut prop_ref) = obj_ref.get_prop_ref(property)? {
+                        prop_ref.set(value)
+                    } else {
+                        Err(RuntimeError::PropertyNotFound(object, property))
+                    }
                 } else {
-                    Err(RuntimeError::PropertyNotFound(object, property))
+                    Ok(())
                 }
             }
             Instruction::Sread(var_operands) => {
