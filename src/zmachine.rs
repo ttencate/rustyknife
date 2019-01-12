@@ -780,7 +780,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
 
     fn reset(&mut self) {
         self.mem.header_mut().set_flag(header::STATUS_LINE_NOT_AVAILABLE, false);
-        self.mem.header_mut().set_flag(header::SCREEN_SPLITTING_AVAILABLE, true);
+        self.mem.header_mut().set_flag(header::SCREEN_SPLITTING_AVAILABLE, false);
         self.mem.header_mut().set_flag(header::VARIABLE_PITCH_FONT_DEFAULT, true);
         self.mem.header_mut().set_flag(header::TRANSCRIPTING_ON, false);
         if self.mem.version() >= V3 {
