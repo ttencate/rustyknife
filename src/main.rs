@@ -25,7 +25,7 @@ impl<'a> ConsolePlatform<'a> {
 
 impl<'a> Platform for ConsolePlatform<'a> {
     fn print(&mut self, string: &str) {
-        // TODO probably need to disable line buffering
+        // Note that stdout is typically line-buffered, but we flush it in read_line().
         print!("{}", string);
     }
 
