@@ -5,7 +5,7 @@ use crate::header;
 use crate::instr::*;
 use crate::mem::Memory;
 use crate::obj::*;
-use crate::platform::Platform;
+use crate::platform::*;
 use crate::random::Random;
 use crate::version::*;
 use crate::zstring;
@@ -605,7 +605,10 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 self.platform.print("\n");
                 Ok(())
             }
-            // Instruction::ShowStatus() =>
+            Instruction::ShowStatus() => {
+                self.show_status_line();
+                Ok(())
+            }
             Instruction::Verify(branch) => {
                 // verify
                 // 0OP:189 D 3 verify ?(label)
@@ -928,11 +931,53 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         self.mem.bytes_mut().set_u16(addr, val)
     }
 
+    fn show_status_line(&mut self) {
+        // 8.2.2.1
+        // Whenever the status line is being printed the first global must contain a valid object
+        // number. (It would be useful if interpreters could protect themselves in case the game
+        // accidentally violates this requirement.)
+        let location = self.mem.globals().get(Global::from_index(0))
+            .and_then(|obj_num| self.mem.obj_table().get_obj_ref(Object::from_number(obj_num)))
+            .and_then(|obj_ref| obj_ref.map_or(Ok(String::new()), |obj_ref| obj_ref.name()))
+            .unwrap_or(String::new());
+
+        // 8.2.1
+        // In Versions 1 and 2, all games are "score games". In Version 3, if bit 1 of 'Flags 1' is
+        // clear then the game is a "score game"; if it is set, then the game is a "time game".
+        let progress = if self.mem.header().flag(header::IS_TIME_GAME) {
+            // 8.2.3.2
+            // For "time games": the time, in the form hours:minutes (held in the second and third
+            // globals). The time may be given on a 24-hour clock or the number of hours may be
+            // reduced modulo 12 (but if so, "AM" or "PM" should be appended). Either way the
+            // player should be able to see the difference between 4am and 4pm, for example. The
+            // hours global may be assumed to be in the range 0 to 23 and the minutes global in the
+            // range 0 to 59.
+            Progress::Time {
+                hours: self.mem.globals().get(Global::from_index(1)).unwrap_or(0),
+                minutes: self.mem.globals().get(Global::from_index(2)).unwrap_or(0),
+            }
+        } else {
+            // 8.2.3.1
+            // For "score games": the score and number of turns, held in the values of the second
+            // and third global variables respectively.
+            Progress::Score {
+                score: self.mem.globals().get(Global::from_index(1)).unwrap_or(0) as i16,
+                turns: self.mem.globals().get(Global::from_index(2)).unwrap_or(0),
+            }
+        };
+
+        let status_line = StatusLine {
+            location: location,
+            progress: progress,
+        };
+        self.platform.update_status_line(&status_line);
+    }
+
     fn read(&mut self, text: Address, parse: Address) -> Result<(), RuntimeError> {
         match self.version() {
             // In Versions 1 to 3, the status line is automatically redisplayed first.
             V1 | V2 | V3 => {
-                self.platform.update_status_line();
+                self.show_status_line();
             }
         }
 

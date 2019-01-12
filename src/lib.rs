@@ -1,3 +1,4 @@
+// TODO Split this crate into two: one lib and one bin
 #![recursion_limit="128"] // quick_error barfs otherwise.
 
 mod bits;
@@ -19,5 +20,5 @@ mod zstring;
 pub use crate::bytes::Address;
 pub use crate::instr::Instruction;
 pub use crate::mem::Memory;
-pub use crate::platform::{InterpreterMetadata, Platform};
+pub use crate::platform::{InterpreterMetadata, Platform, Progress, StatusLine};
 pub use crate::zmachine::ZMachine;

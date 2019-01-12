@@ -29,6 +29,19 @@ impl<'a> Platform for ConsolePlatform<'a> {
         print!("{}", string);
     }
 
+    fn update_status_line(&mut self, status_line: &StatusLine) {
+        // 8.2.2.2
+        // If the object's short name exceeds the available room on the status line, the author
+        // suggests that an interpreter should break it at the last space and append an ellipsis
+        // "...". There is no guaranteed maximum length for location names but an interpreter
+        // should expect names of length up to at least 49 characters.
+        print!("{:49}  ", status_line.location);
+        match status_line.progress {
+            Progress::Score { score, turns } => println!("Score: {:3}  Turns: {:4}", score, turns),
+            Progress::Time { hours, minutes } => println!("Time:  {}:{:02}", hours, minutes),
+        }
+    }
+
     fn next_instr(&mut self, pc: Address, call_stack_depth: usize, instr: &Instruction) {
         if self.trace {
             eprintln!("{:6}  {}{:?}", pc, "  ".repeat(call_stack_depth), instr);

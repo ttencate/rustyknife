@@ -178,6 +178,8 @@ impl Flag {
 
 // Flags 1 (in Versions 1 to 3):
 const FLAGS_1: Address = Address::from_byte_address(0x0001);
+// Bit 1: Status line type: 0=score/turns, 1=hours:mins
+pub const IS_TIME_GAME: Flag = Flag(FLAGS_1, BIT1);
 // 4: Status line not available?
 pub const STATUS_LINE_NOT_AVAILABLE: Flag = Flag(FLAGS_1, BIT4);
 // 5: Screen-splitting available?

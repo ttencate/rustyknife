@@ -101,6 +101,10 @@ impl Local {
 pub struct Global(u8);
 
 impl Global {
+    pub fn from_index(index: usize) -> Global {
+        Global(index as u8 + 0x10)
+    }
+
     pub fn index(self) -> usize {
         self.0 as usize - 0x10
     }
