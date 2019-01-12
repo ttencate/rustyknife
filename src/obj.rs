@@ -100,35 +100,16 @@ impl ObjectTable {
     }
 
     fn write_obj_tree(&self, obj: Object, depth: usize, out: &mut String) -> Result<(), RuntimeError> {
+        let obj_ref = self.get_obj_ref(obj)?.unwrap();
         out.push_str(&"      ".repeat(depth));
-        out.push_str(&self.describe_object(obj)?);
+        out.push_str(&obj_ref.to_string());
         out.push('\n');
-        let mut child = self.get_obj_ref(obj)?.unwrap().child()?;
+        let mut child = obj_ref.child()?;
         while !child.is_null() {
             self.write_obj_tree(child, depth + 1, out)?;
             child = self.get_obj_ref(child)?.unwrap().sibling()?;
         }
         Ok(())
-    }
-
-    // TODO impl ToString for ObjectRef
-    fn describe_object(&self, obj: Object) -> Result<String, RuntimeError> {
-        let mut props_str = String::new();
-        let obj_ref = self.get_obj_ref(obj)?.unwrap();
-        for prop_ref in obj_ref.iter_props()? {
-            let prop_ref = prop_ref?;
-            if !props_str.is_empty() {
-                props_str.push_str(", ");
-            }
-            props_str.push_str(&prop_ref.to_string());
-        }
-        Ok(format!("[{:3}] {:30}  parent: [{:3}]  child: [{:3}]  sibling: [{:3}]  {{{}}}",
-                obj_ref.obj,
-                obj_ref.name()?,
-                obj_ref.parent()?,
-                obj_ref.child()?,
-                obj_ref.sibling()?,
-                props_str))
     }
 }
 
@@ -430,6 +411,31 @@ impl ObjectRef {
     }
 }
 
+impl Display for ObjectRef {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "[{:3}] {:30}  parent: [{:3}]  child: [{:3}]  sibling: [{:3}]  {{",
+                self.obj,
+                self.name().unwrap_or_else(|e| e.to_string()),
+                self.parent().map(|o| o.to_string()).unwrap_or_else(|e| e.to_string()),
+                self.child().map(|o| o.to_string()).unwrap_or_else(|e| e.to_string()),
+                self.sibling().map(|o| o.to_string()).unwrap_or_else(|e| e.to_string()))?;
+        if let Ok(iter) = self.iter_props() {
+            let mut first = true;
+            for prop_ref in iter {
+                if !first {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", prop_ref.map(|p| p.to_string()).unwrap_or_else(|e| e.to_string()))?;
+                first = false;
+            }
+        } else {
+            write!(f, "<error getting props>")?;
+        }
+        write!(f, "}}")?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PropertyRef {
     version: Version,
@@ -587,7 +593,7 @@ impl Display for ObjectTable {
             Ok(n) => {
                 for i in 1..=(n as u16) {
                     let obj = Object::from_number(i);
-                    writeln!(f, "{}", self.describe_object(obj).unwrap_or_else(|e| e.to_string()))?;
+                    writeln!(f, "{}", self.get_obj_ref(obj).map(|obj| obj.unwrap().to_string()).unwrap_or_else(|e| e.to_string()))?;
                 }
                 Ok(())
             }
