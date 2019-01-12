@@ -5,6 +5,7 @@ use rustyknife::*;
 use std::fs;
 
 #[test]
+#[ignore]
 fn test_zork1() {
     let mut platform = TestPlatform::new();
     let data = fs::read("tests/zork1/zork1.z3").unwrap();

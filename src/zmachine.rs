@@ -938,6 +938,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         let mut num_words = 0;
         let mut parse_addr = parse + 2;
         for word in self.mem.dict_table().words(input)? {
+            let word = word?;
             num_words += 1;
             if num_words <= max_words {
                 // println!("{:?}", word);

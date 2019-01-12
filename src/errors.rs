@@ -16,8 +16,14 @@ quick_error! {
         MemoryOverlap(static_memory_base: Address, high_memory_base: Address) {
             display("high memory may not overlap with dynamic memory: {} < {}", static_memory_base, high_memory_base)
         }
+        AbbreviationsTableOutOfRange(abbreviations_table: Address) {
+            display("abbreviations table is outside memory: {}", abbreviations_table)
+        }
         GlobalsTableOutOfRange(globals_table: Address) {
             display("globals table is outside memory: {}", globals_table)
+        }
+        ObjectsTableOutOfRange(objects_table: Address) {
+            display("objects table is outside memory: {}", objects_table)
         }
         DictionaryTableOutOfRange(dictionary_table: Address) {
             display("dictionary table is outside memory: {}", dictionary_table)

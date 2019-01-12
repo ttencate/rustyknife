@@ -22,7 +22,6 @@ impl ZString {
         self.0.len() * 3 / 2
     }
 
-    // TODO make this a method on AbbreviationsTable instead?
     pub fn decode(&self, version: Version, abbrs_table: Option<&AbbreviationsTable>) -> Result<String, RuntimeError> {
         ZStringDecoder::new(version, abbrs_table).decode(self)
     }
@@ -37,7 +36,7 @@ pub struct AbbreviationsTable {
 
 impl AbbreviationsTable {
     pub fn new(version: Version, bytes: Rc<RefCell<Bytes>>, base_addr: Address) -> Result<AbbreviationsTable, FormatError> {
-        // TODO check that the address is in range
+        bytes.borrow().get_u16(base_addr).or(Err(FormatError::AbbreviationsTableOutOfRange(base_addr)))?;
         Ok(AbbreviationsTable {
             version: version,
             bytes: bytes,

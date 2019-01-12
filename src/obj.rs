@@ -15,17 +15,27 @@ use std::rc::Rc;
 pub struct ObjectTable {
     version: Version,
     bytes: Rc<RefCell<Bytes>>,
-    base_addr: Address,
+    prop_defaults_addr: Address,
+    start_addr: Address,
     abbrs_table: AbbreviationsTable,
 }
 
 impl ObjectTable {
     pub fn new(version: Version, bytes: Rc<RefCell<Bytes>>, base_addr: Address, abbrs_table: AbbreviationsTable) -> Result<ObjectTable, FormatError> {
-        // TODO check that the props default table and obj table are in addr range
+        bytes.borrow().get_u16(base_addr).or(Err(FormatError::ObjectsTableOutOfRange(base_addr)))?;
+        let start_addr = match version {
+            // 12.2
+            // The table begins with a block known as the property defaults table. This contains 31
+            // words in Versions 1 to 3 ...
+            V1 | V2 | V3 => base_addr + 31 * 2
+            // ... and 63 in Versions 4 and later.
+        };
+        bytes.borrow().get_u16(start_addr).or(Err(FormatError::ObjectsTableOutOfRange(start_addr)))?;
         Ok(ObjectTable {
             version: version,
             bytes: bytes,
-            base_addr: base_addr,
+            prop_defaults_addr: base_addr,
+            start_addr: start_addr,
             abbrs_table: abbrs_table,
         })
     }
@@ -126,9 +136,8 @@ impl ObjectTable {
         // property block for any object be anywhere, but this convention is consistently
         // followed."
         // https://ericlippert.com/2016/03/02/egyptian-room/
-        let start = self.start_addr();
         let end = self.obj_props_addr(Object::from_number(1))?;
-        Ok((end - start) / self.obj_size())
+        Ok((end - self.start_addr) / self.obj_size())
     }
 
     pub fn get_attr(&self, obj: Object, attr: Attribute) -> Result<bool, RuntimeError> {
@@ -193,23 +202,12 @@ impl ObjectTable {
         // 12.2
         // ... The ... property defaults table ... contains 31 words in Versions 1 to 3 and 63 in
         // Versions 4 and later. ...
-        let addr = self.base_addr + 2 * prop.index();
+        let addr = self.prop_defaults_addr + 2 * prop.index();
         self.bytes.borrow().get_u16(addr)
     }
 
-    fn start_addr(&self) -> Address {
-        // TODO compute once and store in the ctor
-        match self.version {
-            // 12.2
-            // The table begins with a block known as the property defaults table. This contains 31
-            // words in Versions 1 to 3 ...
-            V1 | V2 | V3 => self.base_addr + 31 * 2
-            // ... and 63 in Versions 4 and later.
-        }
-    }
-
     fn obj_addr(&self, obj: Object) -> Address {
-        self.start_addr() + obj.index() * self.obj_size()
+        self.start_addr + obj.index() * self.obj_size()
     }
 
     fn attr_addr(&self, obj: Object, attr: Attribute) -> Result<(Address, Bit), RuntimeError> {
@@ -274,7 +272,6 @@ impl ObjectTable {
 
     fn set_parent(&mut self, obj: Object, parent: Object) -> Result<(), RuntimeError> {
         match self.version {
-            // TODO export V1 etc directly as well
             V1 | V2 | V3 => {
                 let addr = self.parent_addr(obj);
                 self.bytes.borrow_mut().set_u8(addr, parent.0 as u8)

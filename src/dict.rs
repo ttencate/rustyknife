@@ -174,8 +174,8 @@ impl WordIter {
 }
 
 impl Iterator for WordIter {
-    type Item = WordRef;
-    fn next(&mut self) -> Option<WordRef> {
+    type Item = Result<WordRef, RuntimeError>;
+    fn next(&mut self) -> Option<Result<WordRef, RuntimeError>> {
         // 13.6.1
         // First, the text is broken up into words. Spaces divide up words and are otherwise
         // ignored. Word separators also divide words, but each one of them is considered a word in
@@ -198,13 +198,14 @@ impl Iterator for WordIter {
         }
         // TODO refactor so we only return word slices here, let caller do the lookup
         let word = &self.text[start_idx..self.next_idx];
-        // TODO fix up error handling
-        let addr = self.entry_table.find_word(word).unwrap();
-        Some(WordRef {
-            addr: addr,
-            len: (self.next_idx - start_idx) as u8,
-            start_idx: (start_idx + 1) as u8, // + 1 because the text buffer length byte is 0
-        })
+        match self.entry_table.find_word(word) {
+            Ok(addr) => Some(Ok(WordRef {
+                addr: addr,
+                len: (self.next_idx - start_idx) as u8,
+                start_idx: (start_idx + 1) as u8, // + 1 because the text buffer length byte is 0
+            })),
+            Err(err) => Some(Err(err)),
+        }
     }
 }
 
