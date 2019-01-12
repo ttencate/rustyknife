@@ -31,6 +31,10 @@ impl ObjectTable {
     }
 
     pub fn get_name(&self, obj: Object) -> Result<String, RuntimeError> {
+        obj.check_valid(self.version)?;
+        if obj.is_null() {
+            return Ok(String::new())
+        }
         let header_addr = self.obj_props_header_addr(obj)?;
         let text_length = self.bytes.borrow().get_u8(header_addr)?;
         let text_addr = header_addr + 1;
@@ -42,16 +46,25 @@ impl ObjectTable {
 
     pub fn get_parent(&self, obj: Object) -> Result<Object, RuntimeError> {
         obj.check_valid(self.version)?;
+        if obj.is_null() {
+            return Ok(Object::null())
+        }
         Ok(Object::from_number(self.bytes.borrow().get_u8(self.parent_addr(obj))? as u16))
     }
 
     pub fn get_sibling(&self, obj: Object) -> Result<Object, RuntimeError> {
         obj.check_valid(self.version)?;
+        if obj.is_null() {
+            return Ok(Object::null())
+        }
         Ok(Object::from_number(self.bytes.borrow().get_u8(self.sibling_addr(obj))? as u16))
     }
 
     pub fn get_child(&self, obj: Object) -> Result<Object, RuntimeError> {
         obj.check_valid(self.version)?;
+        if obj.is_null() {
+            return Ok(Object::null())
+        }
         Ok(Object::from_number(self.bytes.borrow().get_u8(self.child_addr(obj))? as u16))
     }
 
@@ -63,7 +76,15 @@ impl ObjectTable {
         obj.check_valid(self.version)?;
         dest.check_valid(self.version)?;
 
+        if obj.is_null() {
+            return Ok(())
+        }
+
         self.remove_obj(obj)?;
+
+        if dest.is_null() {
+            return Ok(())
+        }
 
         self.set_parent(obj, dest)?;
         self.set_sibling(obj, self.get_child(dest)?)?;
@@ -75,6 +96,9 @@ impl ObjectTable {
         // Detach the object from its parent, so that it no longer has any parent. (Its children
         // remain in its possession.)
         obj.check_valid(self.version)?;
+        if obj.is_null() {
+            return Ok(())
+        }
 
         let parent = self.get_parent(obj)?;
         if !parent.is_null() {
@@ -110,6 +134,9 @@ impl ObjectTable {
     pub fn get_attr(&self, obj: Object, attr: Attribute) -> Result<bool, RuntimeError> {
         obj.check_valid(self.version)?;
         attr.check_valid(self.version)?;
+        if obj.is_null() {
+            return Ok(false)
+        }
         let (addr, bit) = self.attr_addr(obj, attr)?;
         Ok(self.bytes.borrow().get_u8(addr)?.bit(bit))
     }
@@ -117,6 +144,9 @@ impl ObjectTable {
     pub fn set_attr(&mut self, obj: Object, attr: Attribute, val: bool) -> Result<(), RuntimeError> {
         obj.check_valid(self.version)?;
         attr.check_valid(self.version)?;
+        if obj.is_null() {
+            return Ok(())
+        }
         let (addr, bit) = self.attr_addr(obj, attr)?;
         let byte = self.bytes.borrow().get_u8(addr)?.set_bit(bit, val);
         self.bytes.borrow_mut().set_u8(addr, byte)
@@ -125,6 +155,9 @@ impl ObjectTable {
     pub fn get_prop_ref(&self, obj: Object, prop: Property) -> Result<Option<PropertyRef>, RuntimeError> {
         obj.check_valid(self.version)?;
         prop.check_valid(self.version)?;
+        if obj.is_null() {
+            return Ok(None)
+        }
         for res in self.iter_props(obj)? {
             let prop_ref = res?;
             if prop_ref.prop == prop {
@@ -135,7 +168,11 @@ impl ObjectTable {
     }
 
     pub fn iter_props(&self, obj: Object) -> Result<PropertyIterator, RuntimeError> {
-        PropertyIterator::new(self.version, self.bytes.clone(), self.obj_props_addr(obj)?)
+        obj.check_valid(self.version)?;
+        if obj.is_null() {
+            return PropertyIterator::new(self.version, self.bytes.clone(), None);
+        }
+        PropertyIterator::new(self.version, self.bytes.clone(), Some(self.obj_props_addr(obj)?))
     }
 
     // This method breaks abstraction, but we have no choice: the get_prop_addr instruction only
@@ -343,7 +380,7 @@ impl Object {
         if match version {
             // 12.3.1
             // In Versions 1 to 3, there are at most 255 objects...
-            V1 | V2 | V3 => self.0 >= 1 && self.0 <= 255
+            V1 | V2 | V3 => self.0 <= 255
         } {
             Ok(())
         } else {
@@ -489,11 +526,11 @@ impl Display for PropertyRef {
 pub struct PropertyIterator {
     version: Version,
     bytes: Rc<RefCell<Bytes>>,
-    next_addr: Address,
+    next_addr: Option<Address>,
 }
 
 impl PropertyIterator {
-    fn new(version: Version, bytes: Rc<RefCell<Bytes>>, props_addr: Address) -> Result<PropertyIterator, RuntimeError> {
+    fn new(version: Version, bytes: Rc<RefCell<Bytes>>, props_addr: Option<Address>) -> Result<PropertyIterator, RuntimeError> {
         Ok(PropertyIterator {
             version: version,
             bytes: bytes,
@@ -505,16 +542,20 @@ impl PropertyIterator {
 impl Iterator for PropertyIterator {
     type Item = Result<PropertyRef, RuntimeError>;
     fn next(&mut self) -> Option<Result<PropertyRef, RuntimeError>> {
-        match PropertyRef::new(self.version, self.bytes.clone(), self.next_addr) {
-            Ok(prop_ref) => {
-                if let Some(prop_ref) = prop_ref {
-                    self.next_addr = prop_ref.data_addr + prop_ref.len as usize;
-                    Some(Ok(prop_ref))
-                } else {
-                    None
+        if let Some(next_addr) = self.next_addr {
+            match PropertyRef::new(self.version, self.bytes.clone(), next_addr) {
+                Ok(prop_ref) => {
+                    if let Some(prop_ref) = prop_ref {
+                        self.next_addr = Some(prop_ref.data_addr + prop_ref.len as usize);
+                        Some(Ok(prop_ref))
+                    } else {
+                        None
+                    }
                 }
+                Err(err) => Some(Err(err))
             }
-            Err(err) => Some(Err(err))
+        } else {
+            None
         }
     }
 }

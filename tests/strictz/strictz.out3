@@ -1,0 +1,87 @@
+Strict Z Test
+
+According to the Z-Machine Standards Document, "objects are numbered consecucutively from 1 upward, with object number 0 being used to mean "nothing" (though there is formally no such object)." Hence, it seems reasonable that operations on object number 0 should either fail or, if that is not an option, do nothing. These tests are written with that assumption.
+
+Please note that whenever a test is flagged as "correct", that only means that an instruction returned zero or non-zero (or branched / didn't branch) when it was supposed to. Not that it necessarily returned the correct value. If no result is written the result was not tested, and the test was only included to test the stability of the interpreter.
+
+Would you like to make a transcript of the test results? (Y/N) 
+Testing @jin:
+
+@jin 5 6 => FALSE (correct)
+@jin 6 5 => TRUE (correct)
+@jin 0 5 => FALSE (correct)
+@jin 0 0 => TRUE (correct)
+
+Testing @get_child:
+
+@get_child 5 => 6 (correct)
+@get_child 7 => 0 (correct)
+@get_child 0 => 0 (correct)
+
+Testing @get_parent:
+
+@get_parent 5 => 0 (correct)
+@get_parent 6 => 5 (correct)
+@get_parent 0 => 0 (correct)
+
+Testing @get_sibling:
+
+@get_sibling 5 => 0 (correct)
+@get_sibling 6 => 7 (correct)
+@get_sibling 0 => 0 (correct)
+
+Testing @get_prop_addr:
+
+@get_prop_addr 5 4 => 472 (correct)
+@get_prop_addr 7 4 => 0 (correct)
+@get_prop_addr 0 4 => 0 (correct)
+
+Testing @get_prop:
+
+@get_prop 5 4 => 1 (correct)
+@get_prop 6 4 => 0 (correct)
+@get_prop 0 4 => 0 (correct)
+
+Testing @clear_attr:
+
+@clear_attr 5 0
+@clear_attr 5 1
+@clear_attr 0 0
+@clear_attr 0 1
+
+Testing @set_attr:
+
+@set_attr 5 0
+@set_attr 5 1
+@set_attr 0 0
+
+(Note: An attempt has been made to set attribute number 0 in object number 0. If the @test_attr test below indicates that this attribute has been set, the interpreter did not ignore the instruction as it should have done.)
+
+Testing @test_attr:
+
+@test_attr 5 0 => TRUE (correct)
+@test_attr 5 1 => TRUE (correct)
+@test_attr 6 0 => FALSE (correct)
+@test_attr 6 1 => FALSE (correct)
+@test_attr 0 0 => FALSE (correct)
+@test_attr 0 1 => FALSE (correct)
+
+Testing @insert_obj:
+
+@insert_obj 7 5
+@insert_obj 0 5
+@insert_obj 5 0
+@insert_obj 0 0
+
+Testing aremove_obj:
+
+@remove_obj 7
+@remove_obj 0
+
+Testing aget_next_prop:
+
+@get_next_prop 5 5 => 4 (correct)
+@get_next_prop 6 4 => 0 (correct)
+@get_next_prop 0 4 => 0 (correct)
+
+Test completed!

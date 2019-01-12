@@ -73,7 +73,7 @@ fn run() -> i32 {
     let mut z = ZMachine::new(&mut platform, story_file)
         .expect(&format!("error in story file {:?}", &opts.story_file));
     if let Err(err) = z.run() {
-        eprintln!("{}", err);
+        eprintln!("Interpreter error: {}", err);
         return 1;
     }
 
