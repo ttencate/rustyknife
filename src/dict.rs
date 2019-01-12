@@ -94,6 +94,10 @@ struct EntryTable {
 
 impl EntryTable {
     fn find_word(&self, word: &[u8]) -> Result<Option<Address>, RuntimeError> {
+        if self.num_entries == 0 {
+            return Ok(None)
+        }
+
         // Truncate the word to the dictionary word length so we can compare for equality.
         let word = &word[..std::cmp::min(word.len(), self.decoded_word_len())];
 
