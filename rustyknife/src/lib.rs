@@ -1,4 +1,3 @@
-// TODO Split this crate into two: one lib and one bin
 #![recursion_limit="128"] // quick_error barfs otherwise.
 
 mod bits;

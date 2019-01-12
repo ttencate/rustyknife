@@ -1,4 +1,3 @@
-// TODO pull this out into a separate rustyknife_console crate
 use rustyknife::*;
 use std::fs;
 use std::io::{BufRead, Write};
