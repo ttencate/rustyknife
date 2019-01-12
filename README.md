@@ -22,7 +22,9 @@ Non-goals (for now)
 * To implement anything beyond Z-machine version 3. That said, any features
   that are not common to all versions will be guarded by a `match` block. So if
   a new version number is added, the compiler will point out all the places
-  that need extra code.
+  that need extra code. Additionally, [this table by Hans
+  Prestige](https://hansprestige.com/inform/zmachine_versions.html) will be
+  very useful to find out what changes between versions.
 * To compete with existing Z-machine implementations like Frotz.
 
 Status
