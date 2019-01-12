@@ -146,6 +146,10 @@ impl Address {
     fn to_index(self) -> usize {
         self.0
     }
+
+    pub fn is_null(self) -> bool {
+        self.0 == 0
+    }
 }
 
 impl Add<usize> for Address {

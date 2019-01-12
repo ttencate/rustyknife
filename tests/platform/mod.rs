@@ -27,6 +27,12 @@ impl TestPlatform {
         self.inputs.push_back(line.to_string());
     }
 
+    pub fn add_inputs(&mut self, lines: &[&str]) {
+        for line in lines {
+            self.inputs.push_back(line.to_string());
+        }
+    }
+
     pub fn take_output(&mut self) -> String {
         let mut output = String::new();
         mem::swap(&mut self.output, &mut output);

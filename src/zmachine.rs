@@ -62,9 +62,10 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
     fn step(&mut self) -> Result<bool, RuntimeError> {
         let mut decoder = InstructionDecoder::new(&self.mem, self.pc);
         let (instr, _loc) = decoder.decode()?;
-        self.pc = decoder.next_addr();
 
         self.platform.next_instr(self.pc, self.call_stack.len() - 1, &instr);
+
+        self.pc = decoder.next_addr();
 
         if let Instruction::Quit() = instr {
             return Ok(false);
@@ -633,9 +634,17 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // versions: it calls the routine with 0, 1, 2 or 3 arguments as supplied and
                 // stores the resulting return value. (When the address 0 is called as a routine,
                 // nothing happens and the return value is false.)
-                let routine = var_operands.get(0)?;
+                let routine = Address::from_packed_address(self.eval(var_operands.get(0)?)?, self.version());
                 let args = var_operands.get_slice(1..var_operands.len())?;
-                self.call(routine, args, store)
+
+                // 6.4.3
+                // A routine call to packed address 0 is legal: it does nothing and returns false (0).
+                // Otherwise it is illegal to call a packed address where no routine is present.
+                if routine.is_null() {
+                    self.store(store, 0)
+                } else {
+                    self.call(routine, args, store)
+                }
             }
             Instruction::Storew(var_operands) => {
                 // storew
@@ -804,20 +813,12 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         self.mem.bytes_mut().set_u8(Address::from_byte_address(0x0033), int_meta.standard_version_minor).unwrap();
     }
 
-    fn call(&mut self, routine: Operand, args: &[Operand], store: Store) -> Result<(), RuntimeError> {
+    fn call(&mut self, routine: Address, args: &[Operand], store: Store) -> Result<(), RuntimeError> {
         // 6.4
         // Routine calls occur in the following circumstances: when one of the call... opcodes is
         // executed; in Versions 4 and later, when timed keyboard input is being monitored; in
         // Versions 5 and later, when a sound effect finishes; in Version 6, when the game begins
         // (to call the "main" routine); in Version 6, when a "newline interrupt" occurs.
-
-        // 6.4.3
-        // A routine call to packed address 0 is legal: it does nothing and returns false (0).
-        // Otherwise it is illegal to call a packed address where no routine is present.
-        let routine = Address::from_packed_address(self.eval(routine)?, self.version());
-        if routine == Address::from_packed_address(0, self.version()) {
-            return self.ret(0);
-        }
         
         // 6.4.4
         // When a routine is called, its local variables are created with initial values taken from
