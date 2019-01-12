@@ -2,6 +2,7 @@ use crate::bytes::{Address, Bytes};
 use crate::decoder::InstructionDecoder;
 use crate::errors::{FormatError, RuntimeError};
 use crate::header;
+use crate::header::InterpreterMetadata;
 use crate::instr::*;
 use crate::mem::Memory;
 use crate::obj::*;
@@ -22,6 +23,7 @@ pub struct ZMachine<'a, P> where P: Platform {
     pc: Address,
     call_stack: Vec<StackFrame>,
     random: Random,
+    metadata: InterpreterMetadata,
 }
 
 impl<'a, P> ZMachine<'a, P> where P: Platform {
@@ -39,6 +41,12 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
             pc: Address::from_byte_address(0),
             call_stack: Vec::with_capacity(32),
             random: Random::new(),
+            metadata: InterpreterMetadata {
+                interpreter_number: 6, // IBM PC
+                interpreter_version: b'A', // traditionally uses upper-case letters
+                standard_version_major: 1,
+                standard_version_minor: 1,
+            },
         };
         z.random.seed_unpredictably();
         z.restart();
@@ -57,6 +65,10 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         while self.step()? {
         }
         Ok(())
+    }
+
+    pub fn set_interpreter_metadata(&mut self, int_meta: InterpreterMetadata) {
+        self.metadata = int_meta;
     }
 
     fn step(&mut self) -> Result<bool, RuntimeError> {
@@ -780,40 +792,13 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
 
     fn reset(&mut self) {
         self.mem.header_mut().set_flag(header::STATUS_LINE_NOT_AVAILABLE, false);
-        self.mem.header_mut().set_flag(header::SCREEN_SPLITTING_AVAILABLE, false);
+        self.mem.header_mut().set_flag(header::SCREEN_SPLITTING_AVAILABLE, true);
         self.mem.header_mut().set_flag(header::VARIABLE_PITCH_FONT_DEFAULT, true);
         self.mem.header_mut().set_flag(header::TRANSCRIPTING_ON, false);
         if self.mem.version() >= V3 {
             self.mem.header_mut().set_flag(header::FORCE_FIXED_PITCH_FONT, false);
         }
-
-        // TODO move these into a helper in the Header
-
-        let int_meta = self.platform.interpreter_metadata();
-
-        // Interpreter number
-        // 11.1.3
-        // Infocom used the interpreter numbers:
-        //
-        //    1   DECSystem-20     5   Atari ST           9   Apple IIc
-        //    2   Apple IIe        6   IBM PC            10   Apple IIgs
-        //    3   Macintosh        7   Commodore 128     11   Tandy Color
-        //    4   Amiga            8   Commodore 64
-        self.mem.bytes_mut().set_u8(Address::from_byte_address(0x001e), int_meta.interpreter_number).unwrap();
-
-        // Interpreter version
-        // 11.1.3.1
-        // Interpreter versions are conventionally ASCII codes for upper-case letters in Versions 4
-        // and 5 (note that Infocom's Version 6 interpreters just store numbers here).
-        self.mem.bytes_mut().set_u8(Address::from_byte_address(0x001f), int_meta.interpreter_version).unwrap();
-
-        // Standard revision number
-        // 11.1.5
-        // If an interpreter obeys Revision n.m of this document perfectly, as far as anyone knows,
-        // then byte $32 should be written with n and byte $33 with m. If it is an earlier
-        // (non-standard) interpreter, it should leave these bytes as 0.
-        self.mem.bytes_mut().set_u8(Address::from_byte_address(0x0032), int_meta.standard_version_major).unwrap();
-        self.mem.bytes_mut().set_u8(Address::from_byte_address(0x0033), int_meta.standard_version_minor).unwrap();
+        self.mem.header_mut().set_interpreter_metadata(&self.metadata);
     }
 
     fn call(&mut self, routine: Address, args: &[Operand], store: Store) -> Result<(), RuntimeError> {

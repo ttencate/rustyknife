@@ -1,13 +1,6 @@
 use crate::bytes::Address;
 use crate::instr::Instruction;
 
-pub struct InterpreterMetadata {
-    pub interpreter_number: u8,
-    pub interpreter_version: u8,
-    pub standard_version_major: u8,
-    pub standard_version_minor: u8,
-}
-
 // 8.2
 // In Versions 1 to 3, a status line should be printed by the interpreter, as follows. In Version 3, it must set bit 4 of 'Flags 1' in the header if it is unable to produce a status line.
 pub struct StatusLine {
@@ -36,15 +29,6 @@ pub enum Progress {
 }
 
 pub trait Platform {
-    fn interpreter_metadata(&self) -> InterpreterMetadata {
-        InterpreterMetadata {
-            interpreter_number: 6, // IBM PC
-            interpreter_version: b'A', // traditionally uses upper-case letters
-            standard_version_major: 1,
-            standard_version_minor: 1,
-        }
-    }
-
     fn print(&mut self, string: &str);
 
     fn update_status_line(&mut self, _status_line: &StatusLine) {

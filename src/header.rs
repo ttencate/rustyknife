@@ -161,6 +161,33 @@ impl Header {
         }
         Ok(checksum)
     }
+
+    pub fn set_interpreter_metadata(&self, int_meta: &InterpreterMetadata) {
+        let mut bytes = self.bytes.borrow_mut();
+        // Interpreter number
+        // 11.1.3
+        // Infocom used the interpreter numbers:
+        //
+        //    1   DECSystem-20     5   Atari ST           9   Apple IIc
+        //    2   Apple IIe        6   IBM PC            10   Apple IIgs
+        //    3   Macintosh        7   Commodore 128     11   Tandy Color
+        //    4   Amiga            8   Commodore 64
+        bytes.set_u8(Address::from_byte_address(0x001e), int_meta.interpreter_number).unwrap();
+
+        // Interpreter version
+        // 11.1.3.1
+        // Interpreter versions are conventionally ASCII codes for upper-case letters in Versions 4
+        // and 5 (note that Infocom's Version 6 interpreters just store numbers here).
+        bytes.set_u8(Address::from_byte_address(0x001f), int_meta.interpreter_version).unwrap();
+
+        // Standard revision number
+        // 11.1.5
+        // If an interpreter obeys Revision n.m of this document perfectly, as far as anyone knows,
+        // then byte $32 should be written with n and byte $33 with m. If it is an earlier
+        // (non-standard) interpreter, it should leave these bytes as 0.
+        bytes.set_u8(Address::from_byte_address(0x0032), int_meta.standard_version_major).unwrap();
+        bytes.set_u8(Address::from_byte_address(0x0033), int_meta.standard_version_minor).unwrap();
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -193,3 +220,10 @@ const FLAGS_2: Address = Address::from_byte_address(0x0010);
 pub const TRANSCRIPTING_ON: Flag = Flag(FLAGS_2, BIT0);
 // 1: Game sets to force printing in fixed-pitch font
 pub const FORCE_FIXED_PITCH_FONT: Flag = Flag(FLAGS_2, BIT1);
+
+pub struct InterpreterMetadata {
+    pub interpreter_number: u8,
+    pub interpreter_version: u8,
+    pub standard_version_major: u8,
+    pub standard_version_minor: u8,
+}

@@ -11,6 +11,13 @@ fn test_czech() {
     // platform.enable_trace();
     // println!("{}", Memory::wrap(data.clone().into()).unwrap().obj_table().to_tree_string().unwrap());
     let mut z = ZMachine::new(&mut platform, data).unwrap();
+    z.set_interpreter_metadata(InterpreterMetadata {
+        interpreter_number: 0,
+        interpreter_version: 0,
+        standard_version_major: 1,
+        standard_version_minor: 0,
+    });
+    z.restart();
 
     if let Err(err) = z.run() {
         panic!("{}\nOutput:\n{}", err, platform.take_output());
