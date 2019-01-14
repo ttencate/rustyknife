@@ -88,6 +88,8 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
     }
 
     fn exec_instr(&mut self, instr: Instruction) -> Result<(), RuntimeError> {
+        // TODO guarantee that operands are always evaluated, because this evaluation might have
+        // side effects (right now, Call may sidesteep this)
         match instr {
             Instruction::Je(var_operands, branch) => {
                 // je
