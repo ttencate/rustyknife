@@ -1,61 +1,17 @@
+#![feature(unsized_locals)]
+
 use rustyknife::*;
 use std::fs;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use structopt::StructOpt;
 
-struct ConsolePlatform<'a> {
-    trace: bool,
-    input: &'a mut BufRead,
-}
-
-impl<'a> ConsolePlatform<'a> {
-    pub fn new(input: &'a mut BufRead) -> Self {
-        ConsolePlatform {
-            trace: false,
-            input: input,
-        }
-    }
-
-    pub fn set_trace(&mut self, trace: bool) {
-        self.trace = trace;
-    }
-}
-
-impl<'a> Platform for ConsolePlatform<'a> {
-    fn print(&mut self, string: &str) {
-        // Note that stdout is typically line-buffered, but we flush it in read_line().
-        print!("{}", string);
-    }
-
-    fn update_status_line(&mut self, status_line: &StatusLine) {
-        // 8.2.2.2
-        // If the object's short name exceeds the available room on the status line, the author
-        // suggests that an interpreter should break it at the last space and append an ellipsis
-        // "...". There is no guaranteed maximum length for location names but an interpreter
-        // should expect names of length up to at least 49 characters.
-        print!("{:49}  ", status_line.location);
-        match status_line.progress {
-            Progress::Score { score, turns } => println!("Score: {:3}  Turns: {:4}", score, turns),
-            Progress::Time { hours, minutes } => println!("Time:  {}:{:02}", hours, minutes),
-        }
-    }
-
-    fn next_instr(&mut self, pc: Address, call_stack_depth: usize, instr: &Instruction) {
-        if self.trace {
-            eprintln!("{:6}  {}{:?}", pc, "  ".repeat(call_stack_depth), instr);
-        }
-    }
-
-    fn read_line(&mut self, _max_len_hint: usize) -> String {
-        std::io::stdout().flush().unwrap();
-        let mut buf = String::new();
-        self.input.read_line(&mut buf).unwrap();
-        // Remove trailing newline.
-        buf.pop().expect("unexpected EOF on stdin");
-        buf
-    }
-}
+// TODO reinstate
+//     fn next_instr(&mut self, pc: Address, call_stack_depth: usize, instr: &Instruction) {
+//         if self.trace {
+//             eprintln!("{:6}  {}{:?}", pc, "  ".repeat(call_stack_depth), instr);
+//         }
+//     }
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "basic")]
@@ -72,6 +28,7 @@ fn run() -> i32 {
     let story_file = fs::read(&opts.story_file)
         .expect(&format!("could not read game file {:?}", &opts.story_file));
 
+    // TODO put behind a flag
     // let bytes = Bytes::from(data);
     // let mem = Memory::wrap(bytes)
     //     .expect(&format!("error in story file {:?}", &opts.story_file));
@@ -79,17 +36,54 @@ fn run() -> i32 {
 
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
-    let mut platform = ConsolePlatform::new(&mut input);
-    platform.set_trace(opts.trace);
 
-    let mut z = ZMachine::new(&mut platform, story_file)
+    let mut z = ZMachine::new(story_file)
         .expect(&format!("error in story file {:?}", &opts.story_file));
-    if let Err(err) = z.run() {
-        eprintln!("Interpreter error: {}", err);
-        return 1;
-    }
 
-    0
+    let mut continuation = z.start();
+    loop {
+        match continuation {
+            Ok(cont) => 
+                match cont {
+                    Continuation::Step(next) => {
+                        continuation = next();
+                    }
+                    Continuation::UpdateStatusLine(status_line, next) => {
+                        // 8.2.2.2
+                        // If the object's short name exceeds the available room on the status line, the author
+                        // suggests that an interpreter should break it at the last space and append an ellipsis
+                        // "...". There is no guaranteed maximum length for location names but an interpreter
+                        // should expect names of length up to at least 49 characters.
+                        print!("{:49}  ", status_line.location);
+                        match status_line.progress {
+                            Progress::Score { score, turns } => println!("Score: {:3}  Turns: {:4}", score, turns),
+                            Progress::Time { hours, minutes } => println!("Time:  {}:{:02}", hours, minutes),
+                        }
+                        continuation = next();
+                    }
+                    Continuation::Print(string, next) => {
+                        // Note that stdout is typically line-buffered, but we flush it in read_line().
+                        print!("{}", string);
+                        continuation = next();
+                    }
+                    Continuation::ReadLine(next) => {
+                        std::io::stdout().flush().unwrap();
+                        let mut buf = String::new();
+                        input.read_line(&mut buf).unwrap();
+                        // Remove trailing newline.
+                        buf.pop().expect("unexpected EOF on stdin");
+                        continuation = next(&buf);
+                    }
+                    Continuation::Quit => {
+                        return 0;
+                    }
+                }
+            Err(err) => {
+                eprintln!("Interpreter error: {}", err);
+                return 1;
+            }
+        }
+    }
 }
 
 fn main() {

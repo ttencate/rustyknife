@@ -16,8 +16,15 @@ use std::fmt::{Display, Formatter};
 const STACK_SIZE_LIMIT: usize = 0x10000;
 const CALL_STACK_SIZE_LIMIT: usize = 0x10000;
 
-pub struct ZMachine<'a, P> where P: Platform {
-    platform: &'a mut P,
+pub enum Continuation<'a> {
+    Step(Box<'a + FnOnce() -> Result<Continuation<'a>, RuntimeError>>),
+    UpdateStatusLine(StatusLine, Box<'a + FnOnce() -> Result<Continuation<'a>, RuntimeError>>),
+    Print(String, Box<'a + FnOnce() -> Result<Continuation<'a>, RuntimeError>>),
+    ReadLine(Box<'a + FnOnce(&str) -> Result<Continuation<'a>, RuntimeError>>),
+    Quit,
+}
+
+pub struct ZMachine {
     orig_bytes: Bytes,
     mem: Memory,
     pc: Address,
@@ -26,8 +33,8 @@ pub struct ZMachine<'a, P> where P: Platform {
     metadata: InterpreterMetadata,
 }
 
-impl<'a, P> ZMachine<'a, P> where P: Platform {
-    pub fn new(platform: &'a mut P, story_file: Vec<u8>) -> Result<ZMachine<'a, P>, FormatError> {
+impl ZMachine {
+    pub fn new(story_file: Vec<u8>) -> Result<ZMachine, FormatError> {
         // 5.5
         // In all other Versions, the word at $06 contains the byte address of the first
         // instruction to execute. The Z-machine starts in an environment with no local variables
@@ -35,7 +42,6 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         let bytes = Bytes::from(story_file);
         let mem = Memory::wrap(bytes.clone())?;
         let mut z = ZMachine {
-            platform: platform,
             orig_bytes: bytes,
             mem: mem,
             pc: Address::from_byte_address(0),
@@ -61,33 +67,28 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         self.reset();
     }
 
-    pub fn run(&mut self) -> Result<(), RuntimeError> {
-        while self.step()? {
-        }
-        Ok(())
-    }
-
     pub fn set_interpreter_metadata(&mut self, int_meta: InterpreterMetadata) {
         self.metadata = int_meta;
     }
 
-    fn step(&mut self) -> Result<bool, RuntimeError> {
+    pub fn start<'a>(&'a mut self) -> Result<Continuation<'a>, RuntimeError> {
+        Ok(Continuation::Step(self.next()))
+    }
+
+    fn step(&mut self) -> Result<Continuation, RuntimeError> {
         let mut decoder = InstructionDecoder::new(&self.mem, self.pc);
         let (instr, _loc) = decoder.decode()?;
 
-        self.platform.next_instr(self.pc, self.call_stack.len() - 1, &instr);
+        // TODO reinstate
+        // self.platform.next_instr(self.pc, self.call_stack.len() - 1, &instr);
 
         self.pc = decoder.next_addr();
 
-        if let Instruction::Quit() = instr {
-            return Ok(false);
-        }
         // TODO in case of any error, annotate it with location somehow
-        self.exec_instr(instr)?;
-        Ok(true)
+        self.exec_instr(instr)
     }
 
-    fn exec_instr(&mut self, instr: Instruction) -> Result<(), RuntimeError> {
+    fn exec_instr(&mut self, instr: Instruction) -> Result<Continuation, RuntimeError> {
         // TODO guarantee that operands are always evaluated, because this evaluation might have
         // side effects (right now, Call may sidesteep this)
         match instr {
@@ -104,7 +105,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                         cond = true;
                     }
                 }
-                self.cond_branch(cond, branch)
+                self.cond_branch(cond, branch)?;
             }
             Instruction::Jl(var_operands, branch) => {
                 // jl
@@ -112,7 +113,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Jump if a < b (using a signed 16-bit comparison).
                 let a = self.eval(var_operands.get(0)?)? as i16;
                 let b = self.eval(var_operands.get(1)?)? as i16;
-                self.cond_branch(a < b, branch)
+                self.cond_branch(a < b, branch)?;
             }
             Instruction::Jg(var_operands, branch) => {
                 // jg
@@ -120,7 +121,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Jump if a > b (using a signed 16-bit comparison).
                 let a = self.eval(var_operands.get(0)?)? as i16;
                 let b = self.eval(var_operands.get(1)?)? as i16;
-                self.cond_branch(a > b, branch)
+                self.cond_branch(a > b, branch)?;
             }
             Instruction::DecChk(var_operands, branch) => {
                 // dec_chk
@@ -131,7 +132,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let value = self.eval(var_operands.get(1)?)? as i16;
                 let new_val = self.eval_var(variable)?.wrapping_sub(1) as i16;
                 self.store(variable, new_val as u16)?;
-                self.cond_branch(new_val < value, branch)
+                self.cond_branch(new_val < value, branch)?;
             }
             Instruction::IncChk(var_operands, branch) => {
                 // inc_chk
@@ -142,7 +143,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let value = self.eval(var_operands.get(1)?)? as i16;
                 let new_val = self.eval_var(variable)?.wrapping_add(1) as i16;
                 self.store(variable, new_val as u16)?;
-                self.cond_branch(new_val > value, branch)
+                self.cond_branch(new_val > value, branch)?;
             }
             Instruction::Jin(var_operands, branch) => {
                 // jin
@@ -155,7 +156,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 } else {
                     b.is_null()
                 };
-                self.cond_branch(cond, branch)
+                self.cond_branch(cond, branch)?;
             }
             Instruction::Test(var_operands, branch) => {
                 // test
@@ -163,7 +164,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Jump if all of the flags in bitmap are set (i.e. if bitmap & flags == flags).
                 let bitmap = self.eval(var_operands.get(0)?)?;
                 let flags = self.eval(var_operands.get(1)?)?;
-                self.cond_branch(bitmap & flags == flags, branch)
+                self.cond_branch(bitmap & flags == flags, branch)?;
             }
             Instruction::Or(var_operands, store) => {
                 // or
@@ -171,7 +172,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Bitwise OR.
                 let a = self.eval(var_operands.get(0)?)?;
                 let b = self.eval(var_operands.get(1)?)?;
-                self.store(store, a | b)
+                self.store(store, a | b)?;
             }
             Instruction::And(var_operands, store) => {
                 // and
@@ -179,7 +180,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Bitwise AND.
                 let a = self.eval(var_operands.get(0)?)?;
                 let b = self.eval(var_operands.get(1)?)?;
-                self.store(store, a & b)
+                self.store(store, a & b)?;
             }
             Instruction::TestAttr(var_operands, branch) => {
                 // test_attr
@@ -192,7 +193,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 } else {
                     false
                 };
-                self.cond_branch(cond, branch)
+                self.cond_branch(cond, branch)?;
             }
             Instruction::SetAttr(var_operands) => {
                 // set_attr
@@ -201,9 +202,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let object = Object::from_number(self.eval(var_operands.get(0)?)?);
                 let attribute = Attribute::from_number(self.eval(var_operands.get(1)?)? as u8);
                 if let Some(mut obj_ref) = self.mem.obj_table_mut().get_obj_ref(object)? {
-                    obj_ref.set_attr(attribute, true)
-                } else {
-                    Ok(())
+                    obj_ref.set_attr(attribute, true)?;
                 }
             }
             Instruction::ClearAttr(var_operands) => {
@@ -213,9 +212,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let object = Object::from_number(self.eval(var_operands.get(0)?)?);
                 let attribute = Attribute::from_number(self.eval(var_operands.get(1)?)? as u8);
                 if let Some(mut obj_ref) = self.mem.obj_table_mut().get_obj_ref(object)? {
-                    obj_ref.set_attr(attribute, false)
-                } else {
-                    Ok(())
+                    obj_ref.set_attr(attribute, false)?;
                 }
             }
             Instruction::Store(var_operands) => {
@@ -225,7 +222,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let variable = self.eval(var_operands.get(0)?)?;
                 let variable = self.variable(variable)?;
                 let value = self.eval(var_operands.get(1)?)?;
-                self.store(variable, value)
+                self.store(variable, value)?;
             }
             Instruction::InsertObj(var_operands) => {
                 // insert_obj
@@ -238,12 +235,8 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let destination = Object::from_number(self.eval(var_operands.get(1)?)?);
                 if !destination.is_null() {
                     if let Some(mut obj_ref) = self.mem.obj_table_mut().get_obj_ref(object)? {
-                        obj_ref.insert_into(destination)
-                    } else {
-                        Ok(())
+                        obj_ref.insert_into(destination)?;
                     }
-                } else {
-                    Ok(())
                 }
             }
             Instruction::Loadw(var_operands, store) => {
@@ -255,7 +248,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let word_index = self.eval(var_operands.get(1)?)?;
                 let addr = Address::from_byte_address(array + 2 * word_index);
                 let val = self.mem.bytes().get_u16(addr)?;
-                self.store(store, val)
+                self.store(store, val)?;
             }
             Instruction::Loadb(var_operands, store) => {
                 // loadb
@@ -266,7 +259,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let byte_index = self.eval(var_operands.get(1)?)?;
                 let addr = Address::from_byte_address(array + byte_index);
                 let val = self.mem.bytes().get_u8(addr)?;
-                self.store(store, val as u16)
+                self.store(store, val as u16)?;
             }
             Instruction::GetProp(var_operands, store) => {
                 // get_prop
@@ -291,7 +284,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 } else {
                     0
                 };
-                self.store(store, val)
+                self.store(store, val)?;
             }
             Instruction::GetPropAddr(var_operands, store) => {
                 // get_prop_addr
@@ -309,7 +302,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 } else {
                     Address::null()
                 };
-                self.store(store, addr.to_byte_address())
+                self.store(store, addr.to_byte_address())?;
             }
             Instruction::GetNextProp(var_operands, store) => {
                 // get_next_prop
@@ -338,7 +331,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 } else {
                     Property::null()
                 };
-                self.store(store, next_prop.to_number() as u16)
+                self.store(store, next_prop.to_number() as u16)?;
             }
             Instruction::Add(var_operands, store) => {
                 // add
@@ -346,7 +339,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Signed 16-bit addition.
                 let a = self.eval(var_operands.get(0)?)?;
                 let b = self.eval(var_operands.get(1)?)?;
-                self.store(store, a.wrapping_add(b))
+                self.store(store, a.wrapping_add(b))?;
             }
             Instruction::Sub(var_operands, store) => {
                 // sub
@@ -354,7 +347,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Signed 16-bit subtraction.
                 let a = self.eval(var_operands.get(0)?)?;
                 let b = self.eval(var_operands.get(1)?)?;
-                self.store(store, a.wrapping_sub(b))
+                self.store(store, a.wrapping_sub(b))?;
             }
             Instruction::Mul(var_operands, store) => {
                 // mul
@@ -362,7 +355,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Signed 16-bit multiplication.
                 let a = self.eval(var_operands.get(0)?)? as i16;
                 let b = self.eval(var_operands.get(1)?)? as i16;
-                self.store(store, a.wrapping_mul(b) as u16)
+                self.store(store, a.wrapping_mul(b) as u16)?;
             }
             Instruction::Div(var_operands, store) => {
                 // div
@@ -374,7 +367,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 if b == 0 {
                     return Err(RuntimeError::DivisionByZero);
                 }
-                self.store(store, a.wrapping_div(b) as u16)
+                self.store(store, a.wrapping_div(b) as u16)?;
             }
             Instruction::Mod(var_operands, store) => {
                 // mod
@@ -386,14 +379,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 if b == 0 {
                     return Err(RuntimeError::DivisionByZero);
                 }
-                self.store(store, a.wrapping_rem(b) as u16)
+                self.store(store, a.wrapping_rem(b) as u16)?;
             }
             Instruction::Jz(operand, branch) => {
                 // jz
                 // 1OP:128 0 jz a ?(label)
                 // Jump if a = 0.
                 let a = self.eval(operand)?;
-                self.cond_branch(a == 0, branch)
+                self.cond_branch(a == 0, branch)?;
             }
             Instruction::GetSibling(operand, store, branch) => {
                 // get_sibling
@@ -406,7 +399,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                     Object::null()
                 };
                 self.store(store, sibling.number())?;
-                self.cond_branch(!sibling.is_null(), branch)
+                self.cond_branch(!sibling.is_null(), branch)?;
             }
             Instruction::GetChild(operand, store, branch) => {
                 // get_child
@@ -420,7 +413,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                     Object::null()
                 };
                 self.store(store, child.number())?;
-                self.cond_branch(!child.is_null(), branch)
+                self.cond_branch(!child.is_null(), branch)?;
             }
             Instruction::GetParent(operand, store) => {
                 // get_parent
@@ -432,7 +425,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 } else {
                     Object::null()
                 };
-                self.store(store, parent.number())
+                self.store(store, parent.number())?;
             }
             Instruction::GetPropLen(operand, store) => {
                 // get_prop_len
@@ -449,7 +442,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 } else {
                     self.mem.obj_table().get_prop_len(prop_addr)?
                 };
-                self.store(store, len as u16)
+                self.store(store, len as u16)?;
             }
             Instruction::Inc(operand) => {
                 // inc
@@ -458,7 +451,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let variable = self.eval(operand)?;
                 let variable = self.variable(variable)?;
                 let new_val = self.eval_var(variable)?.wrapping_add(1);
-                self.store(variable, new_val)
+                self.store(variable, new_val)?;
             }
             Instruction::Dec(operand) => {
                 // dec
@@ -467,7 +460,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let variable = self.eval(operand)?;
                 let variable = self.variable(variable)?;
                 let new_val = self.eval_var(variable)?.wrapping_sub(1);
-                self.store(variable, new_val)
+                self.store(variable, new_val)?;
             }
             Instruction::PrintAddr(operand) => {
                 // print_addr
@@ -476,8 +469,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let addr = Address::from_byte_address(self.eval(operand)?);
                 let zstring = self.mem.bytes().get_zstring(addr)?;
                 let string = zstring.decode(self.version(), Some(&self.mem.abbrs_table()))?;
-                self.platform.print(&string);
-                Ok(())
+                return self.print(string);
             }
             Instruction::RemoveObj(operand) => {
                 // remove_obj
@@ -486,9 +478,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // children remain in its possession.)
                 let object = Object::from_number(self.eval(operand)?);
                 if let Some(mut obj_ref) = self.mem.obj_table_mut().get_obj_ref(object)? {
-                    obj_ref.remove_from_parent()
-                } else {
-                    Ok(())
+                    obj_ref.remove_from_parent()?;
                 }
             }
             Instruction::PrintObj(operand) => {
@@ -503,15 +493,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 } else {
                     "".to_string()
                 };
-                self.platform.print(&name);
-                Ok(())
+                return self.print(name);
             }
             Instruction::Ret(operand) => {
                 // ret
                 // 1OP:139 B ret value
                 // Returns from the current routine with the value given.
                 let value = self.eval(operand)?;
-                self.ret(value)
+                self.ret(value)?;
             }
             Instruction::Jump(operand) => {
                 // jump
@@ -528,7 +517,6 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // This is analogous to the calculation for branch offsets.
                 let offset = self.eval(operand)? as i16;
                 self.pc += (offset - 2) as i32;
-                Ok(())
             }
             Instruction::PrintPaddr(operand) => {
                 // print_paddr
@@ -537,8 +525,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let addr = Address::from_packed_address(self.eval(operand)?, self.version());
                 let zstring = self.mem.bytes().get_zstring(addr)?;
                 let string = zstring.decode(self.version(), Some(&self.mem.abbrs_table()))?;
-                self.platform.print(&string);
-                Ok(())
+                return self.print(string);
             }
             Instruction::Load(operand, store) => {
                 // load
@@ -548,7 +535,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let variable = self.eval(operand)?;
                 let variable = self.variable(variable)?;
                 let value = self.eval_var(variable)?;
-                self.store(store, value)
+                self.store(store, value)?;
             }
             Instruction::Not(operand, store) => {
                 // not
@@ -558,32 +545,30 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // a 1OP instruction, reasonably since it has 1 operand, but in later Versions it
                 // was moved into the extended set to make room for call_1n.
                 let value = self.eval(operand)?;
-                self.store(store, !value)
+                self.store(store, !value)?;
             }
             Instruction::Rtrue() => {
                 // rtrue
                 // 0OP:176 0 rtrue
                 // Return true (i.e., 1) from the current routine.
-                self.ret(1)
+                self.ret(1)?;
             }
             Instruction::Rfalse() => {
                 // rfalse
                 // 0OP:177 1 rfalse
                 // Return false (i.e., 0) from the current routine.
-                self.ret(0)
+                self.ret(0)?;
             }
             Instruction::Print(string) => {
-                self.platform.print(&string);
-                Ok(())
+                return self.print(string);
             }
             Instruction::PrintRet(string) => {
                 // print_ret
                 // 0OP:179 3 print_ret <literal-string>
                 // Print the quoted (literal) Z-encoded string, then print a new-line and then
                 // return true (i.e., 1).
-                self.platform.print(&string);
-                self.platform.print("\n");
-                self.ret(1)
+                self.ret(1)?;
+                return self.print(string);
             }
             Instruction::Nop() => {
                 // nop
@@ -591,7 +576,6 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Probably the official "no operation" instruction, which, appropriately, was
                 // never operated (in any of the Infocom datafiles): it may once have been a
                 // breakpoint.
-                Ok(())
             }
             // Instruction::Save(branch) =>
             // Instruction::Restore(branch) =>
@@ -602,26 +586,23 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // Pops top of stack and returns that. (This is equivalent to ret sp, but is one
                 // byte cheaper.)
                 let value = self.frame_mut().pull()?;
-                self.ret(value)
+                self.ret(value)?;
             }
             Instruction::Pop() => {
                 // pop
                 // 0OP:185 9 1 pop
                 // Throws away the top item on the stack. (This was useful to lose unwanted routine
                 // call results in early Versions.)
-                self.frame_mut().pull().and(Ok(()))
+                self.frame_mut().pull().and(Ok(()))?;
             }
             Instruction::Quit() => {
-                // This should not happen, because the caller already checked.
-                Ok(())
+                return Ok(Continuation::Quit);
             }
             Instruction::NewLine() => {
-                self.platform.print("\n");
-                Ok(())
+                return self.print("\n".to_string());
             }
             Instruction::ShowStatus() => {
-                self.show_status_line();
-                Ok(())
+                return self.update_status_line();
             }
             Instruction::Verify(branch) => {
                 // verify
@@ -642,7 +623,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                     Some(expected_checksum) => expected_checksum == self.mem.header().actual_checksum(),
                     None => true,
                 };
-                self.cond_branch(cond, branch)
+                self.cond_branch(cond, branch)?;
             }
             Instruction::Call(var_operands, store) => {
                 // call
@@ -658,9 +639,9 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // A routine call to packed address 0 is legal: it does nothing and returns false (0).
                 // Otherwise it is illegal to call a packed address where no routine is present.
                 if routine.is_null() {
-                    self.store(store, 0)
+                    self.store(store, 0)?;
                 } else {
-                    self.call(routine, args, store)
+                    self.call(routine, args, store)?;
                 }
             }
             Instruction::Storew(var_operands) => {
@@ -671,7 +652,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let array = self.eval(var_operands.get(0)?)?;
                 let word_index = self.eval(var_operands.get(1)?)?;
                 let value = self.eval(var_operands.get(2)?)?;
-                self.store_u16(Address::from_byte_address(array + 2 * word_index), value)
+                self.store_u16(Address::from_byte_address(array + 2 * word_index), value)?;
             }
             Instruction::Storeb(var_operands) => {
                 // storeb
@@ -681,7 +662,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let array = self.eval(var_operands.get(0)?)?;
                 let byte_index = self.eval(var_operands.get(1)?)?;
                 let value = self.eval(var_operands.get(2)?)?;
-                self.store_u8(Address::from_byte_address(array + byte_index), value as u8)
+                self.store_u8(Address::from_byte_address(array + byte_index), value as u8)?;
             }
             Instruction::PutProp(var_operands) => {
                 // put_prop
@@ -698,12 +679,10 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let value = self.eval(var_operands.get(2)?)?;
                 if let Some(obj_ref) = self.mem.obj_table().get_obj_ref(object)? {
                     if let Some(mut prop_ref) = obj_ref.get_prop_ref(property)? {
-                        prop_ref.set(value)
+                        prop_ref.set(value)?;
                     } else {
-                        Err(RuntimeError::PropertyNotFound(object, property))
+                        return Err(RuntimeError::PropertyNotFound(object, property));
                     }
-                } else {
-                    Ok(())
                 }
             }
             Instruction::Sread(var_operands) => {
@@ -718,7 +697,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // any window.
                 let text = Address::from_byte_address(self.eval(var_operands.get(0)?)?);
                 let parse = Address::from_byte_address(self.eval(var_operands.get(1)?)?);
-                self.read(text, parse)
+                return self.read(text, parse);
             }
             Instruction::PrintChar(var_operands) => {
                 // print_char
@@ -728,17 +707,15 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 // than 1023.
                 let output_character_code = self.eval(var_operands.get(0)?)?;
                 if let Some(character) = zstring::zscii(output_character_code)? {
-                    self.platform.print(&character.to_string());
+                    return self.print(character.to_string());
                 }
-                Ok(())
             }
             Instruction::PrintNum(var_operands) => {
                 // print_num
                 // VAR:230 6 print_num value
                 // Print (signed) number in decimal.
                 let value = self.eval(var_operands.get(0)?)?;
-                self.platform.print(&format!("{}", value as i16));
-                Ok(())
+                return self.print(format!("{}", value as i16));
             }
             Instruction::Random(var_operands, store) => {
                 // random
@@ -763,14 +740,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                     // say. Note that we can safely add 1 because we know that range <= 0x7fff.
                     self.random.get(1..range as u16 + 1)
                 };
-                self.store(store, val)
+                self.store(store, val)?;
             }
             Instruction::Push(var_operands) => {
                 // push
                 // VAR:232 8 push value
                 // Pushes value onto the game stack.
                 let value = self.eval(var_operands.get(0)?)?;
-                self.frame_mut().push(value)
+                self.frame_mut().push(value)?;
             }
             Instruction::Pull(var_operands) => {
                 // pull
@@ -782,14 +759,15 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
                 let variable = self.eval(var_operands.get(0)?)?;
                 let variable = self.variable(variable)?;
                 let value = self.frame_mut().pull()?;
-                self.store(variable, value)
+                self.store(variable, value)?;
             }
             // Instruction::SplitWindow(var_operands) =>
             // Instruction::SetWindow(var_operands) =>
             // Instruction::OutputStream(var_operands) =>
             // Instruction::InputStream(var_operands) =>
             _ => panic!("TODO implement instruction {:?}", instr)
-        }
+        };
+        Ok(Continuation::Step(self.next()))
     }
 
     fn reset(&mut self) {
@@ -918,7 +896,15 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         self.mem.bytes_mut().set_u16(addr, val)
     }
 
-    fn show_status_line(&mut self) {
+    fn next<'a>(&'a mut self) -> Box<'a + FnOnce() -> Result<Continuation<'a>, RuntimeError>> {
+        Box::new(move || { self.step() })
+    }
+
+    fn print<'a>(&'a mut self, string: String) -> Result<Continuation<'a>, RuntimeError> {
+        Ok(Continuation::Print(string, self.next()))
+    }
+
+    fn update_status_line<'a>(&'a mut self) -> Result<Continuation<'a>, RuntimeError> {
         // 8.2.2.1
         // Whenever the status line is being printed the first global must contain a valid object
         // number. (It would be useful if interpreters could protect themselves in case the game
@@ -957,16 +943,17 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
             location: location,
             progress: progress,
         };
-        self.platform.update_status_line(&status_line);
+        Ok(Continuation::UpdateStatusLine(status_line, self.next()))
     }
 
-    fn read(&mut self, text: Address, parse: Address) -> Result<(), RuntimeError> {
-        match self.version() {
-            // In Versions 1 to 3, the status line is automatically redisplayed first.
-            V1 | V2 | V3 => {
-                self.show_status_line();
-            }
-        }
+    fn read<'a>(&'a mut self, text: Address, parse: Address) -> Result<Continuation<'a>, RuntimeError> {
+        // TODO reinstate
+        // match self.version() {
+        //     // In Versions 1 to 3, the status line is automatically redisplayed first.
+        //     V1 | V2 | V3 => {
+        //         self.update_status_line();
+        //     }
+        // }
 
         let max_text_len = match self.version() {
             // In Versions 1 to 4, byte 0 of the text-buffer should initially contain the maximum
@@ -995,9 +982,14 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
             return Err(RuntimeError::BufferTooSmall(max_parse_len, 6));
         }
 
+        Ok(Continuation::ReadLine(Box::new(move |raw_input| {
+            self.parse_read_line(text, parse, max_text_len, max_words, raw_input)
+        })))
+    }
+
+    fn parse_read_line<'a>(&'a mut self, text: Address, parse: Address, max_text_len: u16, max_words: u8, raw_input: &str) -> Result<Continuation<'a>, RuntimeError> {
         // A sequence of characters is read in from the current input stream until a carriage
         // return (or, in Versions 5 and later, any terminating character) is found.
-        let raw_input = self.platform.read_line(max_text_len as usize);
         let input = raw_input.to_lowercase();
         let mut write_addr = text + 1;
         match self.version() {
@@ -1043,7 +1035,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
         }
         self.mem.bytes_mut().set_u8(parse + 1, num_words)?;
 
-        Ok(())
+        Ok(Continuation::Step(self.next()))
     }
 
     fn version(&self) -> Version {
@@ -1059,7 +1051,7 @@ impl<'a, P> ZMachine<'a, P> where P: Platform {
     }
 }
 
-impl<'a, P> Display for ZMachine<'a, P> where P: Platform {
+impl Display for ZMachine {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "pc: {:}", self.pc)
     }
