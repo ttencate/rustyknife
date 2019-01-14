@@ -30,4 +30,16 @@ Non-goals (for now)
 Status
 ------
 
-Early days. Nothing is done yet.
+* Most functionality of the Z-machine versions 1-3 has been implemented.
+* It passes the CZECH and strictz test suites (insofar applicable to Z-machine
+  version 3).
+* There is a very simple console-line based version, which reads from standard
+  input and prints to standard output.
+* Zork seems to run.
+
+To be done:
+
+* Saving and restoring
+* Screen splitting
+* IRC bot
+* WebAssembly version and JavaScript wrapper
