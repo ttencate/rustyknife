@@ -114,6 +114,8 @@ impl EntryTable {
             if entry < word {
                 left = mid + 1;
             } else if entry > word {
+                // TODO searching for a word before the very first word in the dictionary causes
+                // underflow! repro case: type "!"
                 right = mid - 1;
             } else { // entry == word
                 return Ok(Some(self.entry_addr(mid)));

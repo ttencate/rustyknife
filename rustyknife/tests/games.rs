@@ -1,54 +1,91 @@
+#![feature(unsized_locals)]
+
 use difference::Changeset;
 use rustyknife::*;
-use std::collections::VecDeque;
 use std::fs;
-use std::mem;
+
+fn make_zmachine(filename: &str) -> ZMachine {
+    let data = fs::read(filename).unwrap();
+    ZMachine::new(data).unwrap()
+}
+
+fn run_zmachine(mut zmachine: ZMachine, inputs: &[&str]) -> String {
+    let mut input = inputs.iter();
+
+    let mut output = String::new();
+
+    let mut continuation = zmachine.start();
+    loop {
+        match continuation {
+            Ok(cont) => match cont {
+                Continuation::Step(next) => {
+                    continuation = next();
+                }
+                Continuation::UpdateStatusLine(_status_line, next) => {
+                    continuation = next();
+                }
+                Continuation::Print(string, next) => {
+                    output += &string;
+                    continuation = next();
+                }
+                Continuation::ReadLine(next) => {
+                    let line = input.next().unwrap();
+                    continuation = next(&line);
+                }
+                Continuation::Quit => {
+                    break;
+                }
+            }
+            Err(err) => {
+                panic!("Z-machine generated a runtime error: {}\nOutput so far:\n{}",
+                       err, output);
+            }
+        }
+    }
+
+    output
+}
+
+fn read_output(filename: &str) -> String {
+    String::from_utf8(fs::read(filename).unwrap()).unwrap().replace("\r\n", "\n")
+}
+
+fn assert_eq_with_diff(actual: &str, expected: &str) {
+    let diff = Changeset::new(&actual, &expected, "");
+    assert!(actual == expected,
+        "Actual output did not match expected output. Difference (green = expected, red = actual):\n\n{}\n", diff);
+}
 
 #[test]
 fn test_strictz() {
-    let mut platform = TestPlatform::new();
-    let data = fs::read("tests/strictz/strictz.z3").unwrap();
-    
-    // platform.enable_trace();
-    platform.add_input("N");
+    let zmachine = make_zmachine("tests/strictz/strictz.z3");
 
-    let mut z = ZMachine::new(&mut platform, data).unwrap();
-    if let Err(err) = z.run() {
-        panic!("{}\nOutput:\n{}", err, platform.take_output());
-    }
-    let expected_output = String::from_utf8(fs::read("tests/strictz/strictz.out3").unwrap()).unwrap();
-    platform.expect_output(&expected_output);
+    let output = run_zmachine(zmachine, &[&"N"]);
+
+    assert_eq_with_diff(&output, &read_output("tests/strictz/strictz.out3"));
 }
 
 #[test]
 fn test_czech() {
-    let mut platform = TestPlatform::new();
-    let data = fs::read("tests/czech/czech.z3").unwrap();
-
-    // platform.enable_trace();
-    // println!("{}", Memory::wrap(data.clone().into()).unwrap().obj_table().to_tree_string().unwrap());
-    let mut z = ZMachine::new(&mut platform, data).unwrap();
-    z.set_interpreter_metadata(InterpreterMetadata {
+    let mut zmachine = make_zmachine("tests/czech/czech.z3");
+    zmachine.set_interpreter_metadata(InterpreterMetadata {
         interpreter_number: 0,
         interpreter_version: 0,
         standard_version_major: 1,
         standard_version_minor: 0,
     });
-    z.restart();
+    zmachine.restart();
 
-    if let Err(err) = z.run() {
-        panic!("{}\nOutput:\n{}", err, platform.take_output());
-    }
-    let expected_output = String::from_utf8(fs::read("tests/czech/czech.out3").unwrap()).unwrap();
-    platform.expect_output(&expected_output);
+    let output = run_zmachine(zmachine, &[]);
+
+    assert_eq_with_diff(&output, &read_output("tests/czech/czech.out3"));
 }
 
 #[test]
 fn test_zork1() {
-    let mut platform = TestPlatform::new();
-    let data = fs::read("tests/zork1/zork1.z3").unwrap();
-
-    platform.add_inputs(&[
+    let zmachine = make_zmachine("tests/zork1/zork1.z3");
+    
+    let output = run_zmachine(zmachine, &[
         &"open mailbox",
         &"take leaflet and read it",
         &"go north",
@@ -64,72 +101,8 @@ fn test_zork1() {
         &"take sword and turn on lamp",
         &"go down" /* and realise that you left the lamp behind */,
         &"quit",
-        &"y"]);
+        &"y",
+    ]);
 
-    let mut z = ZMachine::new(&mut platform, data).unwrap();
-    if let Err(err) = z.run() {
-        panic!("{}\nOutput:\n{}", err, platform.take_output());
-    }
-    let expected_output = String::from_utf8(fs::read("tests/zork1/zork1.out3").unwrap()).unwrap();
-    platform.expect_output(&expected_output);
-}
-
-pub struct TestPlatform {
-    trace: bool,
-    inputs: VecDeque<String>,
-    output: String,
-}
-
-#[allow(dead_code)]
-impl TestPlatform {
-    pub fn new() -> Self {
-        TestPlatform {
-            trace: false,
-            inputs: VecDeque::new(),
-            output: String::new(),
-        }
-    }
-
-    pub fn enable_trace(&mut self) {
-        self.trace = true;
-    }
-
-    pub fn add_input(&mut self, line: &str) {
-        self.inputs.push_back(line.to_string());
-    }
-
-    pub fn add_inputs(&mut self, lines: &[&str]) {
-        for line in lines {
-            self.inputs.push_back(line.to_string());
-        }
-    }
-
-    pub fn take_output(&mut self) -> String {
-        let mut output = String::new();
-        mem::swap(&mut self.output, &mut output);
-        output
-    }
-
-    pub fn expect_output(&mut self, expected_output: &str) {
-        let actual_output = self.take_output();
-        let diff = Changeset::new(&actual_output, &expected_output, "");
-        assert!(actual_output == expected_output,
-            "Actual output did not match expected output. Difference (green = expected, red = actual):\n\n{}\n", diff);
-    }
-}
-
-impl Platform for TestPlatform {
-    fn print(&mut self, string: &str) {
-        self.output += string;
-    }
-
-    fn read_line(&mut self, _max_len_hint: usize) -> String {
-        self.inputs.pop_front().expect("more inputs were read than were provided")
-    }
-
-    fn next_instr(&mut self, pc: Address, call_stack_depth: usize, instr: &Instruction) {
-        if self.trace {
-            eprintln!("{:6}  {:}{:?}", pc, "  ".repeat(call_stack_depth), instr);
-        }
-    }
+    assert_eq_with_diff(&output, &read_output("tests/zork1/zork1.out3"));
 }

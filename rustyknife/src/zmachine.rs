@@ -568,7 +568,7 @@ impl ZMachine {
                 // Print the quoted (literal) Z-encoded string, then print a new-line and then
                 // return true (i.e., 1).
                 self.ret(1)?;
-                return self.print(string);
+                return self.print(string + "\n");
             }
             Instruction::Nop() => {
                 // nop
