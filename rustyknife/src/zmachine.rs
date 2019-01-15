@@ -11,7 +11,7 @@ use crate::random::Random;
 use crate::version::*;
 use crate::zstring;
 use std::fmt;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 
 const STACK_SIZE_LIMIT: usize = 0x10000;
 const CALL_STACK_SIZE_LIMIT: usize = 0x10000;
@@ -22,6 +22,20 @@ pub enum Continuation<'a> {
     Print(String, Box<'a + FnOnce() -> Result<Continuation<'a>, RuntimeError>>),
     ReadLine(Box<'a + FnOnce(&str) -> Result<Continuation<'a>, RuntimeError>>),
     Quit,
+    // TODO consider adding a RuntimeError variant here, and implement some of the traits that
+    // Result implements to allow for nice ? syntax
+}
+
+impl<'a> Debug for Continuation<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Continuation::Step(_) => write!(f, "Continuation::Step(_)"),
+            Continuation::UpdateStatusLine(status_line, _) => write!(f, "Continuation::UpdateStatusLine({:?}, _)", status_line),
+            Continuation::Print(text, _) => write!(f, "Continuation::Print({:?}, _)", text),
+            Continuation::ReadLine(_) => write!(f, "Continuation::ReadLine(_)"),
+            Continuation::Quit => write!(f, "Continuation::Quit"),
+        }
+    }
 }
 
 pub struct ZMachine {

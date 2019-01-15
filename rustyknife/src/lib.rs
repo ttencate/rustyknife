@@ -17,8 +17,9 @@ mod zmachine;
 mod zstring;
 
 pub use crate::bytes::Address;
+pub use crate::errors::{FormatError, RuntimeError};
 pub use crate::header::InterpreterMetadata;
 pub use crate::instr::Instruction;
 pub use crate::mem::Memory;
-pub use crate::platform::{Platform, Progress, StatusLine};
+pub use crate::platform::{Progress, StatusLine};
 pub use crate::zmachine::{Continuation, ZMachine};
