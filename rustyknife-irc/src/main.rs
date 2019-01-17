@@ -88,6 +88,9 @@ impl<'a> Bot<'a> {
 
     fn run_until_read(&mut self) {
         loop {
+            if self.continuation.is_none() {
+                return;
+            }
             match self.continuation.take().unwrap() {
                 Ok(cont) => {
                     match cont {
@@ -116,24 +119,32 @@ impl<'a> Bot<'a> {
                             return;
                         }
                         Continuation::Quit => {
-                            self.panic("Game quit");
+                            self.quit();
                         }
                     }
                 }
                 Err(err) => {
-                    self.panic(err);
+                    eprintln!("Error in Z-machine: {}", err);
+                    self.say(&format!("Error in Z-machine: {}", &err));
+                    self.quit();
                 }
             }
         }
     }
 
     fn set_topic(&self, topic: &str) {
-        self.client.send_topic(&self.channel, topic).unwrap(); // TODO not unwrap
+        self.client.send_topic(&self.channel, topic).unwrap_or_else(Self::log_error);
     }
 
     fn say(&self, text: &str) {
-        let text = if text.is_empty() { " " } else { text }; // Sending empty messages is not possible.
-        self.client.send_privmsg(&self.channel, text).unwrap(); // TODO not unwrap
+        // Sending empty messages is not possible. We can make blank lines show up, but at the
+        // cost of less compact output, so we don't.
+        // let text = if text.is_empty() { " " } else { text };
+        self.client.send_privmsg(&self.channel, text).unwrap_or_else(Self::log_error);
+    }
+
+    fn quit(&self) {
+        self.client.send_quit("eaten by a grue").unwrap_or_else(Self::log_error);
     }
 
     fn print(&mut self, text: &str) {
@@ -155,10 +166,8 @@ impl<'a> Bot<'a> {
         self.output = String::new();
     }
 
-    fn panic<E: std::fmt::Display>(&self, err: E) -> ! {
-        self.say(&format!("Fatal error: {}", &err));
-        self.client.send_quit("eaten by a grue");
-        panic!("Fatal error: {}", err);
+    fn log_error(err: IrcError) {
+        eprintln!("IRC error: {}", err);
     }
 }
 
