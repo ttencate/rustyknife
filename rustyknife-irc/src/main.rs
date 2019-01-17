@@ -50,6 +50,7 @@ fn run() -> Result<(), IrcError> {
         client: &client,
         channel: opts.channel.to_owned(),
         joined: false,
+        output: String::new(),
     };
     bot.run()
 }
@@ -59,6 +60,7 @@ struct Bot<'a> {
     client: &'a IrcClient,
     channel: String,
     joined: bool,
+    output: String,
 }
 
 impl<'a> Bot<'a> {
@@ -67,7 +69,6 @@ impl<'a> Bot<'a> {
     }
 
     fn handle_msg(&mut self, msg: Message) {
-        println!("incoming: {:?}", msg);
         match &msg.command {
             Command::JOIN(chan, None, None) => if *chan == self.channel {
                 self.joined = true;
@@ -75,7 +76,6 @@ impl<'a> Bot<'a> {
             }
             Command::PRIVMSG(target, message) if self.joined => {
                 if *target == self.channel {
-                    println!("at read: {:?}", &self.continuation);
                     if let Ok(Continuation::ReadLine(next)) = self.continuation.take().unwrap() {
                         self.continuation = Some(next(&message));
                     }
@@ -88,7 +88,6 @@ impl<'a> Bot<'a> {
 
     fn run_until_read(&mut self) {
         loop {
-            println!("in loop: {:?}", &self.continuation);
             match self.continuation.take().unwrap() {
                 Ok(cont) => {
                     match cont {
@@ -108,10 +107,11 @@ impl<'a> Bot<'a> {
                             self.continuation = Some(next());
                         }
                         Continuation::Print(string, next) => {
-                            self.say(&string);
+                            self.print(&string);
                             self.continuation = Some(next());
                         }
                         Continuation::ReadLine(next) => {
+                            self.prompt();
                             self.continuation = Some(Ok(Continuation::ReadLine(next)));
                             return;
                         }
@@ -132,7 +132,27 @@ impl<'a> Bot<'a> {
     }
 
     fn say(&self, text: &str) {
+        let text = if text.is_empty() { " " } else { text }; // Sending empty messages is not possible.
         self.client.send_privmsg(&self.channel, text).unwrap(); // TODO not unwrap
+    }
+
+    fn print(&mut self, text: &str) {
+        self.output.push_str(text);
+        if let Some(last_newline) = self.output.rfind("\n") {
+            for line in self.output[0..last_newline + 1].lines() {
+                self.say(line);
+            }
+            self.output = self.output[last_newline + 1..].to_string();
+        }
+    }
+
+    fn prompt(&mut self) {
+        // Printing a lone ">" in IRC is weird, so we suppress it. Not sure if all games print
+        // exactly this prompt, so this might require some tweaking (regex?).
+        if self.output != ">" {
+            self.say(&self.output);
+        }
+        self.output = String::new();
     }
 
     fn panic<E: std::fmt::Display>(&self, err: E) -> ! {
