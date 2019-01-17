@@ -75,7 +75,7 @@ impl<'a> Bot<'a> {
                 self.run_until_read();
             }
             Command::PRIVMSG(target, message) if self.joined => {
-                if *target == self.channel {
+                if *target == self.channel && !message.is_empty() && !message.starts_with(" ") {
                     if let Ok(Continuation::ReadLine(next)) = self.continuation.take().unwrap() {
                         self.continuation = Some(next(&message));
                     }
