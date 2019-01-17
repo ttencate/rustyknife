@@ -103,8 +103,6 @@ impl ZMachine {
     }
 
     fn exec_instr(&mut self, instr: Instruction) -> Result<Continuation, RuntimeError> {
-        // TODO guarantee that operands are always evaluated, because this evaluation might have
-        // side effects (right now, Call may sidesteep this)
         match instr {
             Instruction::Je(var_operands, branch) => {
                 // je
@@ -647,7 +645,10 @@ impl ZMachine {
                 // stores the resulting return value. (When the address 0 is called as a routine,
                 // nothing happens and the return value is false.)
                 let routine = Address::from_packed_address(self.eval(var_operands.get(0)?)?, self.version());
-                let args = var_operands.get_slice(1..var_operands.len())?;
+                let mut args = Vec::with_capacity(var_operands.len() - 1);
+                for i in 1..var_operands.len() {
+                    args.push(self.eval(var_operands.get(i)?)?);
+                }
 
                 // 6.4.3
                 // A routine call to packed address 0 is legal: it does nothing and returns false (0).
@@ -655,7 +656,7 @@ impl ZMachine {
                 if routine.is_null() {
                     self.store(store, 0)?;
                 } else {
-                    self.call(routine, args, store)?;
+                    self.call(routine, &args, store)?;
                 }
             }
             Instruction::Storew(var_operands) => {
@@ -795,7 +796,7 @@ impl ZMachine {
         self.mem.header_mut().set_interpreter_metadata(&self.metadata);
     }
 
-    fn call(&mut self, routine: Address, args: &[Operand], store: Store) -> Result<(), RuntimeError> {
+    fn call(&mut self, routine: Address, args: &[u16], store: Store) -> Result<(), RuntimeError> {
         // 6.4
         // Routine calls occur in the following circumstances: when one of the call... opcodes is
         // executed; in Versions 4 and later, when timed keyboard input is being monitored; in
@@ -814,7 +815,7 @@ impl ZMachine {
         // It is legal for there to be more arguments than local variables (any spare arguments are
         // thrown away) or for there to be fewer.
         for i in 0..(std::cmp::min(args.len(), frame.num_locals())) {
-            frame.set_local(Local::from_index(i), self.eval(args[i])?)?;
+            frame.set_local(Local::from_index(i), args[i])?;
         }
 
         if self.call_stack.len() >= CALL_STACK_SIZE_LIMIT {
