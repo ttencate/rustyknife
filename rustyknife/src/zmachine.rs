@@ -1016,6 +1016,7 @@ impl ZMachine {
                 // a string array of length n in Inform terminology.)
                 let mut bytes_mut = self.mem.bytes_mut();
                 for c in input.chars().take(max_text_len as usize) {
+                    // TODO this breaks on non-ASCII; do a reverse mapping from Unicode to ZSCII
                     let byte = if c <= 0xff as char { c as u8 } else { b'?' };
                     bytes_mut.set_u8(write_addr, byte)?;
                     write_addr += 1;

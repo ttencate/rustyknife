@@ -215,7 +215,8 @@ pub fn zscii(idx: u16) -> Result<Option<char>, RuntimeError> {
         // as French E-acute), others unusual punctuation (Spanish question mark), others new
         // alphabets (Cyrillic or Hebrew); still others may want dingbat characters,
         // mathematical or musical symbols, and so on.
-        155..=251 => Ok(Some(DEFAULT_UNICODE_TABLE[idx as usize - 155])),
+        155..=223 => Ok(Some(DEFAULT_UNICODE_TABLE[idx as usize - 155])),
+        224..=251 => Err(RuntimeError::InvalidCharacterCode(idx)), // Not defined in V1..=V3.
         _ => Err(RuntimeError::InvalidCharacterCode(idx)),
     }
 }
