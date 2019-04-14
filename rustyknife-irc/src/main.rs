@@ -140,6 +140,7 @@ impl<'a> Bot<'a> {
         // Sending empty messages is not possible. We can make blank lines show up, but at the
         // cost of less compact output, so we don't.
         // let text = if text.is_empty() { " " } else { text };
+        // TODO split up overly long messages
         self.client.send_privmsg(&self.channel, text).unwrap_or_else(Self::log_error);
     }
 
